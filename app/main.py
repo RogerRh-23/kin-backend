@@ -84,60 +84,15 @@ def read_root():
         "cors_enabled": True
     }
 
-# === RUTAS DE AUTENTICACIÓN ===
-
-@app.post("/auth/login", response_model=LoginResponse)
-async def login(request: LoginRequest):
-    """
-    Endpoint de login que acepta email/password y devuelve JWT token
-    """
-    print(f"🔐 Login attempt for: {request.email}")
-    
-    # Validación básica de credenciales (reemplazar con tu lógica de DB)
-    if request.email == "admin@empresa.com" and request.password == "admin123":
-        # Crear token
-        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-        access_token = create_access_token(
-            data={"sub": request.email, "user_id": 1},
-            expires_delta=access_token_expires
-        )
-        
-        print(f"✅ Login successful for {request.email}")
-        return LoginResponse(
-            access_token=access_token,
-            token_type="bearer",
-            user_id=1,
-            email=request.email
-        )
-    else:
-        print(f"❌ Login failed for {request.email}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Credenciales incorrectas",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-@app.get("/auth/me", response_model=User)
-async def get_current_user(token: str = Depends(security)):
-    """
-    Endpoint protegido que devuelve info del usuario actual
-    """
-    try:
-        payload = jwt.decode(token.credentials, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
-        user_id: int = payload.get("user_id")
-        if email is None:
-            raise HTTPException(status_code=401, detail="Token inválido")
-        
-        # En producción, buscar usuario en DB
-        return User(id=user_id, email=email, nombre="Admin User")
-    except jwt.PyJWTError:
-        raise HTTPException(status_code=401, detail="Token inválido")
+# Include auth router from app.auth
+from .auth import login as auth_router
+from .auth.security import get_current_user
+app.include_router(auth_router.router, prefix="/auth")
 
 # === RUTAS DE EMPLEADOS (tus rutas existentes) ===
 
 @app.post("/empleados/")
-def create_empleado(empleado: dict, db: Session = Depends(get_db)):
+def create_empleado(empleado: dict, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     """
     Crear empleado - adaptado para funcionar sin schemas específicos
     """
@@ -146,7 +101,7 @@ def create_empleado(empleado: dict, db: Session = Depends(get_db)):
     return {"message": "Empleado creado", "data": empleado, "id": 123}
 
 @app.get("/empleados/")
-def read_empleados(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def read_empleados(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     """
     Listar empleados
     """
@@ -158,16 +113,7 @@ def read_empleados(skip: int = 0, limit: int = 100, db: Session = Depends(get_db
     ]
     return empleados[skip:skip + limit]
 
-# === MANEJO EXPLÍCITO DE PREFLIGHT ===
-
-@app.options("/auth/login")
-@app.options("/auth/me")
-@app.options("/empleados/")
-async def handle_preflight():
-    """
-    Maneja explícitamente las peticiones OPTIONS (preflight)
-    """
-    return {"message": "CORS preflight OK"}
+# Note: CORS preflight is handled by CORSMiddleware
 
 if __name__ == "__main__":
     import uvicorn

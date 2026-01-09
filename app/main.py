@@ -1,34 +1,37 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.core.db import init_db
+from app.core.db import create_db_and_tables
 from app.models.user import User 
-from app.api import auth, users
+from app.models.employee import Employee
+from app.api import auth, users, employees
 
-# --- CONFIGURACIÓN DE ARRANQUE (Lifespan) ---
+# --- 1. CONFIGURACIÓN DE ARRANQUE (Lifespan) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Esto se ejecuta ANTES de que el servidor acepte peticiones
+    # Esto ocurre cuando el servidor se enciende
     print("🔄 Inicializando base de datos...")
-    init_db()
-    print("🟢 Base de datos lista y tablas creadas (si no existían).")
-    yield
-    # Esto se ejecutaría cuando apagues el servidor (limpieza)
+    create_db_and_tables()
+    print("🟢 Base de datos lista y tablas verificadas.")
+    
+    yield # Aquí el servidor queda activo
+    
+    # Esto ocurre cuando el servidor se apaga
     print("🔴 Servidor apagándose...")
 
-# --- CREACIÓN DE LA APP ---
+# --- 2. CREACIÓN DE LA APP (UNA SOLA VEZ) ---
 app = FastAPI(
     title="Kin ERP API",
     description="Backend para gestión de Nómina, RH y SUA",
     version="1.0.0",
-    lifespan=lifespan # <--- Aquí conectamos la lógica de arranque
+    lifespan=lifespan
 )
 
-# --- CONFIGURACIÓN DE CORS ---
+# --- 3. CONFIGURACIÓN DE CORS ---
 origins = [
-    "http://localhost:3000",  # Next.js / Web
-    "http://localhost:8081",  # Expo Web
-    "*",                      # Móviles y emuladores
+    "http://localhost:3000",
+    "http://localhost:8081",
+    "*",
 ]
 
 app.add_middleware(
@@ -39,16 +42,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- 4. REGISTRO DE RUTAS ---
 app.include_router(auth.router, prefix="/auth", tags=["Autenticación"])
 app.include_router(users.router, prefix="/users", tags=["Usuarios"])
+app.include_router(employees.router, prefix="/employees", tags=["Empleados"])
 
-# --- RUTAS DE PRUEBA ---
+# --- 5. ENDPOINTS DE PRUEBA ---
 @app.get("/")
 def read_root():
     return {
         "sistema": "Kin ERP", 
         "estado": "Operativo 🟢", 
-        "bd": "Conectada"
+        "bd": "PostgreSQL Conectado 🐘"
     }
 
 @app.get("/health")

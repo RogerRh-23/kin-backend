@@ -1,131 +1,56 @@
-# main.py - FastAPI con CORS y autenticación funcional
-
-from fastapi import FastAPI, Depends, HTTPException, status
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBearer
-from sqlalchemy.orm import Session
-from pydantic import BaseModel
-from datetime import datetime, timedelta
-import jwt
-from typing import Optional
+from app.core.db import init_db
+from app.models.user import User 
+from app.api import auth, users
 
-# Importa tus modelos existentes
-try:
-    from . import models, schemas
-    from .database import engine, get_db
-    models.Base.metadata.create_all(bind=engine)
-except ImportError:
-    # Si no tienes los módulos, comenta estas líneas
-    print("Warning: No se encontraron módulos de DB. Usando modo de prueba.")
-    def get_db():
-        return None
+# --- CONFIGURACIÓN DE ARRANQUE (Lifespan) ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Esto se ejecuta ANTES de que el servidor acepte peticiones
+    print("🔄 Inicializando base de datos...")
+    init_db()
+    print("🟢 Base de datos lista y tablas creadas (si no existían).")
+    yield
+    # Esto se ejecutaría cuando apagues el servidor (limpieza)
+    print("🔴 Servidor apagándose...")
 
-app = FastAPI(title="Kin ERP API", version="1.0.0")
+# --- CREACIÓN DE LA APP ---
+app = FastAPI(
+    title="Kin ERP API",
+    description="Backend para gestión de Nómina, RH y SUA",
+    version="1.0.0",
+    lifespan=lifespan # <--- Aquí conectamos la lógica de arranque
+)
 
-# CORS configurado correctamente - SIN "*" cuando allow_credentials=True
+# --- CONFIGURACIÓN DE CORS ---
+origins = [
+    "http://localhost:3000",  # Next.js / Web
+    "http://localhost:8081",  # Expo Web
+    "*",                      # Móviles y emuladores
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:8081",      # Expo web
-        "http://127.0.0.1:8081", 
-        "http://localhost:19006",     # Expo web alternativo
-        "http://127.0.0.1:19006",
-        "http://localhost:3000",      # React dev server
-        "http://127.0.0.1:3000",
-        "http://localhost:19000",     # Expo dev tools
-    ],
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Schemas para autenticación
-class LoginRequest(BaseModel):
-    email: str
-    password: str
+app.include_router(auth.router, prefix="/auth", tags=["Autenticación"])
+app.include_router(users.router, prefix="/users", tags=["Usuarios"])
 
-class LoginResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    user_id: Optional[int] = None
-    email: Optional[str] = None
-
-class User(BaseModel):
-    id: int
-    email: str
-    nombre: Optional[str] = None
-
-# Secret key para JWT (en producción usar variable de entorno)
-SECRET_KEY = "tu-secret-key-super-secreto"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-
-# Security scheme
-security = HTTPBearer()
-
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
-# === RUTAS PRINCIPALES ===
-
+# --- RUTAS DE PRUEBA ---
 @app.get("/")
 def read_root():
     return {
-        "Sistema": "Kin ERP", 
-        "Estado": "Conectado y operativo!",
-        "timestamp": datetime.utcnow().isoformat(),
-        "cors_enabled": True
+        "sistema": "Kin ERP", 
+        "estado": "Operativo 🟢", 
+        "bd": "Conectada"
     }
 
-# Include auth router from app.auth
-from .auth import login as auth_router
-from .auth.security import get_current_user
-app.include_router(auth_router.router, prefix="/auth")
-
-# === RUTAS DE EMPLEADOS (tus rutas existentes) ===
-
-@app.post("/empleados/")
-def create_empleado(empleado: dict, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """
-    Crear empleado - adaptado para funcionar sin schemas específicos
-    """
-    print(f"📝 Creating empleado: {empleado}")
-    # Aquí irá tu lógica de DB cuando esté configurada
-    return {"message": "Empleado creado", "data": empleado, "id": 123}
-
-@app.get("/empleados/")
-def read_empleados(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """
-    Listar empleados
-    """
-    print(f"📋 Fetching empleados (skip={skip}, limit={limit})")
-    # Datos de prueba mientras configuras la DB
-    empleados = [
-        {"id": 1, "nombre": "Juan Pérez", "email": "juan@empresa.com", "activo": True},
-        {"id": 2, "nombre": "María López", "email": "maria@empresa.com", "activo": True},
-    ]
-    return empleados[skip:skip + limit]
-
-# Note: CORS preflight is handled by CORSMiddleware
-
-if __name__ == "__main__":
-    import uvicorn
-    print("🚀 Starting Kin ERP API...")
-    print("📋 Available endpoints:")
-    print("  GET  /                 - API status")
-    print("  POST /auth/login       - Login (email/password)")
-    print("  GET  /auth/me          - Current user info")
-    print("  GET  /empleados/       - List employees")
-    print("  POST /empleados/       - Create employee")
-    print("\n🔧 Test credentials:")
-    print("  Email: admin@empresa.com")
-    print("  Password: admin123")
-    
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}

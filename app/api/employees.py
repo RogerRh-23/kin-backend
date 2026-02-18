@@ -1,27 +1,580 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import secrets
+import pandas as pd
+from io import StringIO
+from decimal import Decimal, InvalidOperation
+from typing import List, Optional
+from datetime import date
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Body
 from sqlmodel import Session, select
-from typing import List
-from app.core.db import get_session
-from app.models.employee import Employee
-from app.schemas.employee import EmployeeCreate, EmployeeOut
+from sqlalchemy import func
+from pydantic import BaseModel
+from app.core.db import get_session  
+from app.models.employee import Employee, Beneficiary
+from app.schemas.employee import EmployeeCreate, EmployeeRead
+from app.models.history import EmploymentHistory
+from app.schemas.history import TerminationRequest, HistoryRead
+from app.core.security import hash_password, encrypt_pin, decrypt_pin
+from app.core.utils import generate_username 
+from app.api.auth import require_role
 
-router = APIRouter()
+router = APIRouter(prefix="/employees", tags=["Employees"])
 
-@router.post("/", response_model=EmployeeOut, status_code=status.HTTP_201_CREATED)
-def create_employee(data: EmployeeCreate, session: Session = Depends(get_session)):
-    # Verificar si el RFC ya existe para no duplicar
-    existing = session.exec(select(Employee).where(Employee.rfc == data.rfc)).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="El RFC ya está registrado")
-    
-    # Convertir esquema a modelo de base de datos
-    db_employee = Employee.model_validate(data)
-    session.add(db_employee)
-    session.commit()
-    session.refresh(db_employee)
-    return db_employee
+# ==========================================
+#  ESQUEMA DE RESPUESTA ESPECIAL (Solo para creación)
+# ==========================================
+class EmployeeCreateResponse(BaseModel):
+    employee: EmployeeRead # Usamos tu schema Read para que serialice bien
+    generated_credentials: dict # Aquí va el PIN visible
 
-@router.get("/", response_model=List[EmployeeOut])
-def list_employees(session: Session = Depends(get_session)):
+# ==========================================
+#  FUNCIONES AUXILIARES (Limpieza de Excel)
+# ==========================================
+
+def clean_money(val):
+    if pd.isna(val) or str(val).strip().upper() in ["NA", "N/A", "", "nan"]:
+        return Decimal("0.00")
+    clean_str = str(val).replace('$', '').replace(',', '').strip()
+    try:
+        return Decimal(clean_str)
+    except InvalidOperation:
+        return Decimal("0.00")
+
+def clean_date(val):
+    if pd.isna(val) or str(val).strip().upper() in ["NA", "N/A", "", "nan"]:
+        return None
+    try:
+        return pd.to_datetime(val, dayfirst=True).date()
+    except:
+        return None
+
+def clean_str(val):
+    if pd.isna(val) or str(val).strip().upper() in ["NA", "N/A", "", "nan"]:
+        return "NA"
+    return str(val).strip()
+
+
+# ==========================================
+#  NOMBRE COMPLETO (Helper)
+# ==========================================
+def build_full_name(nombre, apellido_paterno, apellido_materno):
+    """Construye `nombre_completo` a partir de partes, limpiando valores "NA" y espacios.
+    Devuelve cadena vacía si no hay datos.
+    """
+    parts = []
+    for part in (nombre, apellido_paterno, apellido_materno):
+        if part is None:
+            continue
+        p = str(part).strip()
+        if not p or p.upper() in ("NA", "N/A"):
+            continue
+        parts.append(p)
+    full = " ".join(parts).strip()
+    return full if full else ""
+
+# ==========================================
+#  ENDPOINTS DE LA API
+# ==========================================
+
+# 1. LISTAR TODOS LOS EMPLEADOS (GET)
+@router.get("/", response_model=List[EmployeeRead])
+def get_employees(session: Session = Depends(get_session)):
     employees = session.exec(select(Employee)).all()
     return employees
+
+# --- ENDPOINT: WIDGET DE ALERTA (GET) ---
+@router.get("/missing-credentials-count")
+def count_missing_credentials(session: Session = Depends(get_session)):
+    """
+    Retorna la cantidad de empleados operativos sin credenciales.
+    Uso: Widget de notificaciones en el Dashboard.
+    """
+    # Cuenta filas donde es_operativo es True Y hashed_pin es NULL
+    statement = select(func.count()).where(
+        Employee.es_operativo == True,
+        Employee.hashed_pin == None
+    )
+    count = session.exec(statement).one()
+    
+    return {
+        "faltantes": count, 
+        "alerta": count > 0,
+        "mensaje": f"Hay {count} empleados sin credenciales de App."
+    }
+
+# 2. OBTENER UN EMPLEADO POR ID (GET)
+@router.get("/{employee_id}", response_model=EmployeeRead)
+def get_employee(employee_id: int, session: Session = Depends(get_session)):
+    employee = session.get(Employee, employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+    return employee
+
+# 3. CREAR EMPLEADO MANUAL (POST) - *** MODIFICADO CON GENERACIÓN DE CREDENCIALES ***
+@router.post("/", response_model=EmployeeCreateResponse, status_code=status.HTTP_201_CREATED)
+def create_employee(payload: EmployeeCreate, session: Session = Depends(get_session)):
+    
+    # A) Validar Duplicados (Tu lógica original)
+    existing = session.exec(
+        select(Employee).where(
+            (Employee.nss == payload.nss) | 
+            (Employee.rfc == payload.rfc) | 
+            (Employee.curp == payload.curp)
+        )
+    ).first()
+    
+    if existing:
+        raise HTTPException(
+            status_code=400, 
+            detail="El NSS, RFC o CURP ya existen en la base de datos."
+        )
+
+    # B) Separar Beneficiarios (Tu lógica original)
+    employee_dict = payload.model_dump(exclude={"beneficiaries"})
+
+    # Construir nombre completo a partir de partes
+    employee_dict["nombre_completo"] = build_full_name(
+        employee_dict.get("nombre"),
+        employee_dict.get("apellido_paterno"),
+        employee_dict.get("apellido_materno"),
+    )
+
+    # --- MODIFICACIÓN: Forzamos que sea operativo ---
+    employee_dict["es_operativo"] = True
+    
+    db_employee = Employee(**employee_dict)
+    
+    # C) Vincular Beneficiarios (Tu lógica original)
+    if payload.beneficiaries:
+        for b_data in payload.beneficiaries:
+            db_beneficiary = Beneficiary(**b_data.model_dump())
+            db_employee.beneficiaries.append(db_beneficiary)
+
+    # D) Guardar y Generar Credenciales
+    try:
+        # 1. Guardamos primero (flush) para que la DB le asigne un ID
+        # Necesitamos el ID para crear el usuario (Ej: JUAN-5)
+        
+        session.add(db_employee)
+        session.flush() 
+        session.refresh(db_employee) # Obtenemos el ID recién creado
+
+        # 2. GENERACIÓN AUTOMÁTICA DE CREDENCIALES
+        username = generate_username(db_employee.nombre_completo, db_employee.id)
+        plain_pin = "".join([str(secrets.randbelow(10)) for _ in range(4)]) # PIN "1234"
+
+        # 3. Actualizamos el objeto con las credenciales: hashed + encrypted
+        db_employee.username_operativo = username
+        db_employee.hashed_pin = hash_password(plain_pin)
+        db_employee.encrypted_pin = encrypt_pin(plain_pin)
+
+        # 4. Commit final
+        session.add(db_employee)
+        session.commit()
+        session.refresh(db_employee)
+
+        # 5. Retornamos la estructura especial con el PIN visible
+        return {
+            "employee": db_employee,
+            "generated_credentials": {
+                "username": username,
+                "pin_inicial": plain_pin, # SE MUESTRA SOLO AQUÍ
+                "mensaje": "¡Atención! Entrega este PIN al empleado. No se podrá ver después."
+            }
+        }
+
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al guardar: {str(e)}")
+
+
+# 4. CARGA MASIVA DESDE CSV/EXCEL (POST) - (INTACTO)
+@router.post("/upload-csv/")
+async def upload_employees_csv(
+    file: UploadFile = File(...), 
+    session: Session = Depends(get_session)
+):
+    # Validar extensión
+    if not file.filename.endswith(('.csv', '.txt')):
+        raise HTTPException(status_code=400, detail="El archivo debe ser un CSV.")
+
+    content = await file.read()
+    s_content = content.decode('utf-8')
+
+    # A) Detección Inteligente de Cabeceras
+    try:
+        temp_df = pd.read_csv(StringIO(s_content), header=None, nrows=15)
+        header_row_index = 0
+        found_header = False
+        
+        for i, row in temp_df.iterrows():
+            row_str = row.to_string().upper()
+            if "NSS" in row_str and "R.F.C." in row_str:
+                header_row_index = i
+                found_header = True
+                break
+        
+        if not found_header:
+            header_row_index = 0
+
+        df = pd.read_csv(StringIO(s_content), skiprows=header_row_index)
+        df.columns = df.columns.str.strip().str.upper()
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"No se pudo leer el formato del archivo: {str(e)}")
+
+    created_count = 0
+    errors = []
+
+    # B) Iterar filas
+    for index, row in df.iterrows():
+        real_line = index + header_row_index + 2
+        
+        try:
+            employee_dict = {
+                # Identidad
+                "nombre": clean_str(row.get("NOMBRE (S)")),
+                "apellido_paterno": clean_str(row.get("APELLIDO PATERNO")),
+                "apellido_materno": clean_str(row.get("APELLIDO MATERNO")),
+                "nombre_completo": build_full_name(
+                    clean_str(row.get("NOMBRE (S)")),
+                    clean_str(row.get("APELLIDO PATERNO")),
+                    clean_str(row.get("APELLIDO MATERNO")),
+                ),
+                "nss": clean_str(row.get("NSS")),
+                "rfc": clean_str(row.get("R.F.C.")),
+                "curp": clean_str(row.get("CURP")),
+                "domicilio_completo": clean_str(row.get("DOMICILIO COMPLETO (CALLE, NUM EXT E INT, COLONIA, ALCALDIA O MUNICIPIO, ESTADO, C.P.)")),
+                
+                # Laboral
+                "puesto": clean_str(row.get("PUESTO O CATEGORIA")),
+                "actividades_detalle": clean_str(row.get("ACTIVIDADES QUE REALIZARA EL TRABAJADOR")),
+                "cliente_nombre": clean_str(row.get("NOMBRE DE LA EMPRESA DEL CLIENTE")),
+                "cliente_rfc": clean_str(row.get("RFC DE LA EMPRESA DEL CLIENTE")),
+                
+                # Finanzas
+                "tipo_salario": clean_str(row.get("TIPO DE SALARIO")),
+                "salario_diario": clean_money(row.get("S.D. (PARA EFECTOS DE CIT)")),
+                "factor_integracion": clean_money(row.get("FACTOR INTEGRACION")),
+                "sdi": clean_money(row.get("S.D. I. (PARA EFECTOS DE IMSS)")),
+                "empresa_pagadora": clean_str(row.get("EMPRESA PAGADORA")),
+                
+                # IMSS
+                "fecha_alta_imss": clean_date(row.get("FECHA CON LA QUE ESTA DADO DE ALTA ANTE EL IMSS")),
+                "tiene_infonavit": clean_str(row.get("CREDITO INFONAVIT")),
+                "numero_credito_infonavit": clean_str(row.get("NÚMERO")),
+                "registro_patronal": clean_str(row.get("REGISTRO PATRONAL")),
+                "clase_rt": clean_str(row.get("CLASE R.T.")),
+                
+                # Personales
+                "fecha_nacimiento": clean_date(row.get("FECHA NACIMIENTO")),
+                "estado_civil": clean_str(row.get("ESTADO CIVIL (SOLTERO O CASADO)")),
+                "sexo": clean_str(row.get("SEXO (HOMBRE O MUJER)")),
+                "nacionalidad": clean_str(row.get("NACIONALIDAD")),
+                
+                # Contrato
+                "domicilio_laboral": clean_str(row.get("DOMICILIO DONDE LABORA")),
+                "tipo_contrato": clean_str(row.get("TIPO DE CONTRATO (DETERMINADO, OBRA DETERMINADA, INDETERMINADO O PERIODO DE PRUEBA)")),
+                "duracion_contrato": clean_str(row.get("TIEMPO DE DURACION (SI ES DETERMINADO), NOMBRE DE PROYECTO SI ES POR OBRA.")),
+                "consiste_proyecto": clean_str(row.get("EN QUE CONSISTE EL PROYECTO (OBRA DETERMINADA)")),
+                
+                # Pagos
+                "forma_pago": clean_str(row.get("FORMA DE PAGO (QUINCENAL O SEMANAL ASÍ COMO LOS DIAS EN LOS QUE SE CUBRIRÁN LOS SALARIOS VENCIDOS)")),
+                "se_le_paga_por": clean_str(row.get("SE LE PAGA POR")),
+                "sueldo_mensual_bruto": clean_money(row.get("SUELDO MENSUAL BRUTO")),
+                "sueldo_mensual_neto": clean_money(row.get("SUELDO MENSUAL NETO")),
+                
+                # Banco y Tallas
+                "banco": clean_str(row.get("BANCO")),
+                "cuenta_bancaria": clean_str(row.get("CUENTA")),
+                "clabe_interbancaria": clean_str(row.get("CLABE")),
+                "talla_camisa": clean_str(row.get("TALLA CAMISA")),
+                "talla_pantalon": clean_str(row.get("TALLA PANTALON")),
+                "talla_calzado": clean_str(row.get("TALLA CALZADO")),
+                
+                # --- NUEVO: Credenciales para carga masiva ---
+                # NOTA: En carga masiva NO generamos PIN automáticamente para no alentar el proceso
+                # Se pueden generar después o asumir que la carga masiva no activa app móvil inmediatamente
+                "es_operativo": True 
+            }
+
+            if employee_dict["nss"] == "NA" or not employee_dict["nss"]:
+                 continue
+
+            new_emp = Employee(**employee_dict)
+            
+            # NOTA: Aquí podríamos generar usuario/pin también, pero 
+            # haría la carga masiva más lenta. Sugerencia: Dejarlo así y 
+            # generar credenciales bajo demanda o en un segundo paso.
+            
+            session.add(new_emp)
+            session.flush() 
+            created_count += 1
+
+        except Exception as e:
+            session.rollback()
+            errors.append(f"Fila {real_line}: {str(e)}")
+            continue
+
+    session.commit()
+
+    return {
+        "mensaje": "Proceso de carga finalizado",
+        "empleados_creados": created_count,
+        "errores": errors
+    }
+
+# --- ENDPOINT: DAR DE BAJA (INTACTO) ---
+@router.post("/{employee_id}/terminate", response_model=dict)
+def terminate_employee(
+    employee_id: int, 
+    payload: TerminationRequest, 
+    session: Session = Depends(get_session)
+):
+    employee = session.get(Employee, employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+        
+    if not employee.is_active:
+        raise HTTPException(status_code=400, detail="El empleado ya está dado de baja")
+
+    history_record = EmploymentHistory(
+        employee_id=employee.id,
+        tipo_movimiento="BAJA",
+        motivo=payload.motivo,
+        comentarios=payload.comentarios,
+        recontratable=payload.recontratable,
+        fecha_movimiento=date.today()
+    )
+    
+    employee.is_active = False
+    
+    try:
+        session.add(history_record)
+        session.add(employee)
+        session.commit()
+        return {
+            "mensaje": "Baja procesada exitosamente", 
+            "status_final": "INACTIVO",
+            "semáforo": "VERDE" if payload.recontratable else "ROJO"
+        }
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al procesar la baja: {str(e)}")
+
+# --- ENDPOINT: CONSULTAR HISTORIAL (INTACTO) ---
+@router.get("/{employee_id}/history", response_model=List[HistoryRead])
+def get_employee_history(employee_id: int, session: Session = Depends(get_session)):
+    employee = session.get(Employee, employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+    
+    statement = select(EmploymentHistory).where(
+        EmploymentHistory.employee_id == employee_id
+    ).order_by(EmploymentHistory.fecha_movimiento.desc())
+    
+    history = session.exec(statement).all()
+    return history
+
+# --- ENDPOINT: RECONTRATAR (INTACTO) ---
+@router.post("/{employee_id}/rehire") 
+def rehire_employee(
+    employee_id: int, 
+    payload: dict = Body(default=None), 
+    session: Session = Depends(get_session)
+):
+    employee = session.get(Employee, employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+    
+    if employee.is_active:
+        raise HTTPException(status_code=400, detail="El empleado ya está activo, no se puede recontratar.")
+    
+    employee.is_active = True
+    employee.fecha_baja = None 
+    
+    comentarios_historial = ""
+    if payload:
+        comentarios_historial = payload.get("comentarios", "")
+        for key, value in payload.items():
+            if key not in ["id", "comentarios"] and hasattr(employee, key):
+                setattr(employee, key, value)
+    
+    history_record = EmploymentHistory(
+        employee_id=employee_id,
+        tipo_movimiento="RECONTRATACION", 
+        motivo="Recontratación",
+        comentarios=comentarios_historial,
+        recontratable=True, 
+        fecha_movimiento=date.today()
+    )
+    
+    try:
+        session.add(history_record)
+        session.add(employee)
+        session.commit()
+        session.refresh(employee)
+        
+        return {
+            "mensaje": "Empleado recontratado exitosamente", 
+            "id": employee.id,
+            "estatus": "ACTIVO"
+        }
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al recontratar: {str(e)}")
+    
+# --- ENDPOINT: GENERAR CREDENCIALES MASIVAS (POST-CSV) ---
+@router.post("/generate-missing-credentials")
+def generate_missing_credentials(session: Session = Depends(get_session)):
+    """
+    Busca empleados operativos SIN credenciales (hashed_pin es Null).
+    Genera usuario y PIN, y devuelve la lista visible.
+    """
+    
+    # 1. Buscar empleados 'huérfanos' de credenciales
+    statement = select(Employee).where(
+        Employee.es_operativo == True,
+        Employee.hashed_pin == None
+    )
+    employees = session.exec(statement).all()
+    
+    if not employees:
+        return {"mensaje": "Todos los empleados operativos ya tienen credenciales. Nada que hacer."}
+    
+    generated_report = []
+    errores = [] 
+    
+    for emp in employees:
+        try:
+            # 2. Determinar nombre para generar credenciales: usar nombre_completo si existe,
+            #    si no, construirlo a partir de partes (nombre/apellido_paterno/apellido_materno),
+            #    y si sigue vacío, usar "EMP-<id>" como fallback.
+            nombre_base = getattr(emp, "nombre_completo", None)
+            if not nombre_base:
+                nombre_base = build_full_name(
+                    getattr(emp, "nombre", None),
+                    getattr(emp, "apellido_paterno", None),
+                    getattr(emp, "apellido_materno", None),
+                )
+            if not nombre_base:
+                nombre_base = f"EMP-{emp.id}"
+            
+            # 3. Generar Credenciales
+            username = generate_username(nombre_base, emp.id)
+            plain_pin = "".join([str(secrets.randbelow(10)) for _ in range(4)]) # PIN 4 dígitos
+            
+            # 4. Guardar en BD (Encriptado)
+            emp.username_operativo = username
+            emp.hashed_pin = hash_password(plain_pin)
+            emp.encrypted_pin = encrypt_pin(plain_pin)
+            session.add(emp)
+            
+            # 5. Guardar en el reporte de salida (Visible)
+            generated_report.append({
+                "id": emp.id,
+                "nombre": nombre_base,
+                "usuario_app": username,
+                "pin_inicial": plain_pin # <--- Única vez que se ve
+            })
+            
+        except Exception as e:
+            # Si falla uno (ej. nombre con caracteres raros), lo registramos y seguimos
+            print(f"Error con empleado ID {emp.id}: {str(e)}")
+            errores.append(f"ID {emp.id}: {str(e)}")
+            continue
+    
+    # 6. Guardar cambios masivos
+    session.commit()
+    
+    # 7. Retornar la lista
+    return {
+        "mensaje": f"Se generaron credenciales para {len(generated_report)} empleados.",
+        "advertencia": f"Hubo {len(errores)} errores." if errores else None,
+        "credenciales": generated_report,
+        "errores_detalle": errores
+    }
+
+# --- ENDPOINT: GENERAR/RESETEAR CREDENCIALES INDIVIDUALES ---
+@router.post("/{employee_id}/reset-credentials")
+def reset_employee_credentials(
+    employee_id: int, 
+    session: Session = Depends(get_session)
+):
+    """
+    Genera un nuevo PIN para un empleado específico.
+    Sirve tanto para la primera vez (Generar) como para olvidos (Resetear).
+    """
+    # 1. Buscar empleado
+    employee = session.get(Employee, employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+        
+    # 2. Asegurar que tenga usuario (Si no tiene, se lo creamos)
+    if not employee.username_operativo:
+        nombre_for_username = getattr(employee, "nombre_completo", None)
+        if not nombre_for_username:
+            nombre_for_username = build_full_name(
+                getattr(employee, "nombre", None),
+                getattr(employee, "apellido_paterno", None),
+                getattr(employee, "apellido_materno", None),
+            )
+        if not nombre_for_username:
+            nombre_for_username = f"EMP-{employee.id}"
+        employee.username_operativo = generate_username(nombre_for_username, employee.id)
+    
+    # 3. Generar NUEVO PIN
+    plain_pin = "".join([str(secrets.randbelow(10)) for _ in range(4)])
+    
+    # 4. Guardar hash + encriptado
+    employee.hashed_pin = hash_password(plain_pin)
+    employee.encrypted_pin = encrypt_pin(plain_pin)
+    employee.es_operativo = True # Aseguramos que quede activo para app
+    
+    session.add(employee)
+    session.commit()
+    session.refresh(employee)
+    
+    # 5. Retornar las credenciales (¡Única vez que se verán!)
+    nombre_display = getattr(employee, "nombre_completo", None)
+    if not nombre_display:
+        nombre_display = build_full_name(
+            getattr(employee, "nombre", None),
+            getattr(employee, "apellido_paterno", None),
+            getattr(employee, "apellido_materno", None),
+        )
+    if not nombre_display:
+        nombre_display = f"EMP-{employee.id}"
+
+    return {
+        "mensaje": "Credenciales actualizadas correctamente",
+        "credenciales": {
+            "id": employee.id,
+            "nombre": nombre_display,
+            "usuario_app": employee.username_operativo,
+            "nuevo_pin": plain_pin
+        }
+    }
+
+
+# --- ENDPOINT: REVELAR PIN (SOLO ADMIN) ---
+@router.get("/{employee_id}/reveal-pin", response_model=dict)
+def reveal_pin(employee_id: int, session: Session = Depends(get_session), _admin = Depends(require_role("admin"))):
+    """Revela el PIN original para un empleado (solo admins). Registra acceso en logs."""
+    employee = session.get(Employee, employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+
+    encrypted = getattr(employee, "encrypted_pin", None)
+    if not encrypted:
+        raise HTTPException(status_code=404, detail="No hay PIN registrado para este empleado")
+
+    try:
+        plain = decrypt_pin(encrypted)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo desencriptar el PIN: {str(e)}")
+
+    # Auditoría mínima: imprimir en logs (se recomienda almacenar en tabla de auditoría)
+    print(f"AUDIT: PIN revelado para empleado {employee_id} por admin")
+
+    nombre_display = build_full_name(employee.nombre, employee.apellido_paterno, employee.apellido_materno) or f"EMP-{employee.id}"
+    return {"id": employee.id, "nombre": nombre_display, "pin": plain}

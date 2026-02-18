@@ -5,6 +5,8 @@ from app.core.db import create_db_and_tables
 from app.models.user import User 
 from app.models.employee import Employee
 from app.api import auth, users, employees
+from app.api.auth_mobile import MobileLoginRequest
+from app.api import users, auth, employees, auth_mobile
 
 # --- 1. CONFIGURACIÓN DE ARRANQUE (Lifespan) ---
 @asynccontextmanager
@@ -31,7 +33,6 @@ app = FastAPI(
 origins = [
     "http://localhost:3000",
     "http://localhost:8081",
-    "*",
 ]
 
 app.add_middleware(
@@ -43,9 +44,10 @@ app.add_middleware(
 )
 
 # --- 4. REGISTRO DE RUTAS ---
-app.include_router(auth.router, prefix="/auth", tags=["Autenticación"])
-app.include_router(users.router, prefix="/users", tags=["Usuarios"])
-app.include_router(employees.router, prefix="/employees", tags=["Empleados"])
+app.include_router(auth.router)
+app.include_router(users.router)
+app.include_router(employees.router)
+app.include_router(auth_mobile.router)
 
 # --- 5. ENDPOINTS DE PRUEBA ---
 @app.get("/")

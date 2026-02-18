@@ -1,20 +1,17 @@
 from pydantic import BaseModel, EmailStr
+from app.models.user import UserRole
 
-# Lo que recibimos al registrar un usuario
+# Lo que recibes al crear un usuario
 class UserCreate(BaseModel):
+    nombre_completo: str
     email: EmailStr
     password: str
-    full_name: str
+    role: UserRole
 
-# Lo que devolvemos al frontend (¡NUNCA devolvemos el password!)
+# Lo que respondes (¡SIN la contraseña!)
 class UserRead(BaseModel):
     id: int
-    email: EmailStr
-    full_name: str
+    nombre_completo: str
+    email: str
+    role: UserRole
     is_active: bool
-    role: str
-
-# Lo que devolvemos al hacer Login
-class Token(BaseModel):
-    access_token: str
-    token_type: str

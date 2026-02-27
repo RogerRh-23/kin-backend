@@ -33,19 +33,19 @@ def parse_date(value: Union[str, date]) -> date:
 
 # --- Esquema para Beneficiarios ---
 class BeneficiaryBase(BaseModel):
-    nombre_completo: str
-    parentesco: str
-    porcentaje: Decimal = Field(ge=0, le=100)
+    nombre_completo: Optional[str] = "NA"
+    parentesco: Optional[str] = "NA"
+    porcentaje: Decimal = Field(default=Decimal("0"), ge=0, le=100)
 
 # --- Esquema Principal de Empleado ---
 class EmployeeBase(BaseModel):
-    # Identificación Básica (Requeridos)
+    # Identificación Básica - Mínimos requeridos
     nombre: str
     apellido_paterno: str
     apellido_materno: str
     nss: str
     rfc: str
-    curp: str
+    curp: str = "NA"  # Opcional con default
     
     # Resto son opcionales con valores por defecto
     domicilio_completo: Optional[str] = "NA"
@@ -123,7 +123,7 @@ class EmployeeBase(BaseModel):
 
 # --- Esquema para cuando RECIBES datos (Create) ---
 class EmployeeCreate(EmployeeBase):
-    beneficiaries: List[BeneficiaryBase] = []
+    beneficiaries: List[BeneficiaryBase] = Field(default_factory=list)
 
     @model_validator(mode='after')
     def validate_identity_dates(self) -> 'EmployeeCreate':

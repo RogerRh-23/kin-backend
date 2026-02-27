@@ -27,23 +27,23 @@ class Employee(SQLModel, table=True):
     apellido_materno: str
     nss: str = Field(index=True, unique=True)
     rfc: str = Field(unique=True)
-    curp: str = Field(unique=True)
-    domicilio_completo: str # Incluye Calle, Num, Col, Alcaldía, CP
+    curp: Optional[str] = Field(default=None, unique=True)  # Nullable para datos incompletos
+    domicilio_completo: str = "NA" # Incluye Calle, Num, Col, Alcaldía, CP
     
     # --- BLOQUE 2: PUESTO Y ACTIVIDADES (Columnas I-J) ---
-    puesto: str
-    actividades_detalle: str # "Inspeccionar material para corroborar..."
+    puesto: str = "NA"
+    actividades_detalle: str = "NA" # "Inspeccionar material para corroborar..."
     puesto_sugerido: Optional[str] = None
     turno_sugerido: Optional[str] = None
     
     # --- BLOQUE 3: CLIENTE Y PAGADORA (Columnas K-Q) ---
-    cliente_nombre: str       # Ej: ASPEL MOLDING
-    cliente_rfc: str          # Ej: AMM040126UI1
-    tipo_salario: str         # Ej: SALARIO NOMINAL
-    salario_diario: Decimal = Field(max_digits=10, decimal_places=2) # S.D. CIT
-    factor_integracion: Decimal = Field(default=1.0493, max_digits=6, decimal_places=4)
-    sdi: Decimal = Field(max_digits=10, decimal_places=2) # S.D.I. IMSS
-    empresa_pagadora: str     # Ej: LACS A.C.
+    cliente_nombre: str = "NA"       # Ej: ASPEL MOLDING
+    cliente_rfc: str = "NA"          # Ej: AMM040126UI1
+    tipo_salario: str = "SALARIO NOMINAL"         # Ej: SALARIO NOMINAL
+    salario_diario: Decimal = Field(default=Decimal("0.00"), max_digits=10, decimal_places=2) # S.D. CIT
+    factor_integracion: Decimal = Field(default=Decimal("1.0493"), max_digits=6, decimal_places=4)
+    sdi: Decimal = Field(default=Decimal("0.00"), max_digits=10, decimal_places=2) # S.D.I. IMSS
+    empresa_pagadora: str = "NA"     # Ej: LACS A.C.
     
     # --- BLOQUE 4: SEGURIDAD SOCIAL Y RT (Columnas R-V) ---
     fecha_alta_imss: Optional[date] = None
@@ -78,16 +78,16 @@ class Employee(SQLModel, table=True):
     # --- BLOQUE 7: PAGOS Y BANCO (Columnas AF-AJ) ---
     forma_pago: str = "NA"           # SEMANAL / QUINCENAL
     se_le_paga_por: str = "NA"       # Ej: SERVICIOS DE CALIDAD
-    sueldo_mensual_bruto: Decimal = Field(max_digits=10, decimal_places=2)
-    sueldo_mensual_neto: Decimal = Field(max_digits=10, decimal_places=2)
-    banco: Optional[str] = None
-    cuenta_bancaria: Optional[str] = None
-    clabe_interbancaria: Optional[str] = None
+    sueldo_mensual_bruto: Decimal = Field(default=Decimal("0.00"), max_digits=10, decimal_places=2)
+    sueldo_mensual_neto: Decimal = Field(default=Decimal("0.00"), max_digits=10, decimal_places=2)
+    banco: Optional[str] = Field(default="NA")
+    cuenta_bancaria: Optional[str] = Field(default="NA")
+    clabe_interbancaria: Optional[str] = Field(default="NA")
     
     # --- BLOQUE 8: EQUIPO Y TALLAS (Para Control Operativo) ---
-    talla_camisa: Optional[str] = None
-    talla_pantalon: Optional[str] = None
-    talla_calzado: Optional[str] = None
+    talla_camisa: Optional[str] = Field(default="NA")
+    talla_pantalon: Optional[str] = Field(default="NA")
+    talla_calzado: Optional[str] = Field(default="NA")
     tiene_zapato_casquillo: bool = False
     
     # --- RELACIONES ---

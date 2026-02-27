@@ -165,7 +165,40 @@ def update_employee(
 
 # 4. CREAR EMPLEADO MANUAL (POST) - *** MODIFICADO CON GENERACIÓN DE CREDENCIALES ***
 @router.post("/", response_model=EmployeeCreateResponse, status_code=status.HTTP_201_CREATED)
-def create_employee(payload: EmployeeCreate, session: Session = Depends(get_session)):
+def create_employee(body: dict = Body(...), session: Session = Depends(get_session)):
+    """
+    Crea un nuevo empleado. Acepta datos en dos formatos:
+    1. Directo: { "nombre": "...", "nss": "...", ... }
+    2. Envuelto: { "datos": { "nombre": "...", "nss": "...", ... } }
+    """
+    
+    # Extraer datos - permitir ambos formatos
+    if "datos" in body and isinstance(body["datos"], dict):
+        # Formato envuelto del frontend
+        employee_data = body["datos"]
+    else:
+        # Formato directo
+        employee_data = body
+    
+    # Asegurar que beneficiaries está presente
+    if "beneficiaries" not in employee_data:
+        employee_data["beneficiaries"] = []
+    
+    # Convertir a EmployeeCreate para validación
+    try:
+        payload = EmployeeCreate(**employee_data)
+    except Exception as e:
+        import traceback
+        error_detail = str(e)
+        if hasattr(e, 'errors'):
+            # Pydantic ValidationError - extraer detalles
+            error_detail = str(e.errors())
+        print(f"[VALIDATION_ERROR] {error_detail}")
+        print(f"[TRACEBACK] {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=422, 
+            detail=f"Error de validación: {error_detail[:500]}"
+        )
     
     # A) Validar Duplicados (Tu lógica original)
     existing = session.exec(

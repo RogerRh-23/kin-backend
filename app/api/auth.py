@@ -12,7 +12,7 @@ from app.core.security import verify_password
 
 load_dotenv()  # Carga variables de entorno desde un archivo .env
 
-router = APIRouter(tags=["Authentication"])
+router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 # --- CONFIGURACIÓN DE SEGURIDAD ---
 # EN PRODUCCIÓN: Esto debe ir en variables de entorno (.env)

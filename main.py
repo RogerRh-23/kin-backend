@@ -12,14 +12,14 @@ from app.api import users, auth, employees, auth_mobile
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Esto ocurre cuando el servidor se enciende
-    print("🔄 Inicializando base de datos...")
+    print("[INIT] Inicializando base de datos...")
     create_db_and_tables()
-    print("🟢 Base de datos lista y tablas verificadas.")
+    print("[OK] Base de datos lista y tablas verificadas.")
     
     yield # Aquí el servidor queda activo
     
     # Esto ocurre cuando el servidor se apaga
-    print("🔴 Servidor apagándose...")
+    print("[SHUTDOWN] Servidor apagándose...")
 
 # --- 2. CREACIÓN DE LA APP (UNA SOLA VEZ) ---
 app = FastAPI(
@@ -54,8 +54,8 @@ app.include_router(auth_mobile.router)
 def read_root():
     return {
         "sistema": "Kin ERP", 
-        "estado": "Operativo 🟢", 
-        "bd": "PostgreSQL Conectado 🐘"
+        "estado": "Operativo", 
+        "bd": "PostgreSQL Conectado"
     }
 
 @app.get("/health")

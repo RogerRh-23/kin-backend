@@ -33,6 +33,8 @@ class Employee(SQLModel, table=True):
     # --- BLOQUE 2: PUESTO Y ACTIVIDADES (Columnas I-J) ---
     puesto: str
     actividades_detalle: str # "Inspeccionar material para corroborar..."
+    puesto_sugerido: Optional[str] = None
+    turno_sugerido: Optional[str] = None
     
     # --- BLOQUE 3: CLIENTE Y PAGADORA (Columnas K-Q) ---
     cliente_nombre: str       # Ej: ASPEL MOLDING
@@ -44,28 +46,38 @@ class Employee(SQLModel, table=True):
     empresa_pagadora: str     # Ej: LACS A.C.
     
     # --- BLOQUE 4: SEGURIDAD SOCIAL Y RT (Columnas R-V) ---
-    fecha_alta_imss: date
-    tiene_infonavit: str      # "SI" o "NO"
+    fecha_alta_imss: Optional[date] = None
+    tiene_infonavit: str = "NO"      # "SI" o "NO"
     numero_credito_infonavit: Optional[str] = None
-    registro_patronal: str    # Ej: Y-5451-0271-05
-    clase_rt: str             # Ej: III
+    registro_patronal: str = "NA"    # Ej: Y-5451-0271-05
+    clase_rt: str = "NA"             # Ej: III
     
     # --- BLOQUE 5: DATOS PERSONALES (Columnas W-Z) ---
-    fecha_nacimiento: date
-    estado_civil: str         # SOLTERO / CASADO
-    sexo: str                 # HOMBRE / MUJER
-    nacionalidad: str
+    fecha_nacimiento: Optional[date] = None
+    estado_civil: str = "NA"         # SOLTERO / CASADO
+    sexo: str = "NA"                 # HOMBRE / MUJER
+    nacionalidad: str = "MEXICANO"
+    correo: Optional[str] = None
+    numero_telefono: Optional[str] = None
+    domicilio_fiscal: Optional[str] = None
+    tipo_sangre: Optional[str] = None
+    tiene_fonacot: bool = False
+    numero_fonacot: Optional[str] = None
+    tiene_enfermedades_alergias: bool = False
+    enfermedades_alergias: Optional[str] = None
+    medicamentos_especiales: Optional[str] = None
+    experiencia_anterior: Optional[str] = None
     
     # --- BLOQUE 6: CONTRATO Y LOGÍSTICA (Columnas AA-AE) ---
-    domicilio_laboral: str
-    tipo_contrato: str        # DETERMINADO, INDETERMINADO, PRUEBA
-    duracion_contrato: str    # Ej: 6 MESES
+    domicilio_laboral: str = "NA"
+    tipo_contrato: str = "NA"        # DETERMINADO, INDETERMINADO, PRUEBA
+    duracion_contrato: str = "NA"    # Ej: 6 MESES
     nombre_proyecto: Optional[str] = None
     consiste_proyecto: Optional[str] = None
     
     # --- BLOQUE 7: PAGOS Y BANCO (Columnas AF-AJ) ---
-    forma_pago: str           # SEMANAL / QUINCENAL
-    se_le_paga_por: str       # Ej: SERVICIOS DE CALIDAD
+    forma_pago: str = "NA"           # SEMANAL / QUINCENAL
+    se_le_paga_por: str = "NA"       # Ej: SERVICIOS DE CALIDAD
     sueldo_mensual_bruto: Decimal = Field(max_digits=10, decimal_places=2)
     sueldo_mensual_neto: Decimal = Field(max_digits=10, decimal_places=2)
     banco: Optional[str] = None
@@ -76,6 +88,7 @@ class Employee(SQLModel, table=True):
     talla_camisa: Optional[str] = None
     talla_pantalon: Optional[str] = None
     talla_calzado: Optional[str] = None
+    tiene_zapato_casquillo: bool = False
     
     # --- RELACIONES ---
     beneficiaries: List["Beneficiary"] = Relationship(back_populates="employee")

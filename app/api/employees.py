@@ -10,7 +10,7 @@ from sqlalchemy import func
 from pydantic import BaseModel
 from app.core.db import get_session  
 from app.models.employee import Employee, Beneficiary
-from app.schemas.employee import EmployeeCreate, EmployeeRead
+from app.schemas.employee import EmployeeCreate, EmployeeRead, EmployeeUpdate
 from app.models.history import EmploymentHistory
 from app.schemas.history import TerminationRequest, HistoryRead
 from app.core.security import hash_password, encrypt_pin, decrypt_pin
@@ -109,7 +109,61 @@ def get_employee(employee_id: int, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Empleado no encontrado")
     return employee
 
-# 3. CREAR EMPLEADO MANUAL (POST) - *** MODIFICADO CON GENERACIÓN DE CREDENCIALES ***
+# 2.5 ACTUALIZAR UN EMPLEADO (PUT)
+@router.put("/{employee_id}", response_model=EmployeeRead)
+def update_employee(
+    employee_id: int, 
+    payload: EmployeeUpdate, 
+    session: Session = Depends(get_session)
+):
+    """
+    Actualiza la información de un empleado existente.
+    Solo actualiza los campos que se envíen (los otros mantienen su valor).
+    """
+    # Obtener el empleado
+    employee = session.get(Employee, employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+    
+    # Validar que no se intente cambiar a NSS/RFC/CURP ya existentes
+    update_data = payload.model_dump(exclude_unset=True)
+    
+    if "nss" in update_data or "rfc" in update_data or "curp" in update_data:
+        # Verificar duplicados (excluyendo el empleado actual)
+        filters = []
+        if "nss" in update_data:
+            filters.append((Employee.nss == update_data["nss"]) & (Employee.id != employee_id))
+        if "rfc" in update_data:
+            filters.append((Employee.rfc == update_data["rfc"]) & (Employee.id != employee_id))
+        if "curp" in update_data:
+            filters.append((Employee.curp == update_data["curp"]) & (Employee.id != employee_id))
+        
+        if filters:
+            # Combine filters with OR
+            from sqlalchemy import or_
+            existing = session.exec(select(Employee).where(or_(*filters))).first()
+            if existing:
+                raise HTTPException(
+                    status_code=400,
+                    detail="El NSS, RFC o CURP ya existen en otro empleado."
+                )
+    
+    # Actualizar solo los campos proporcionados
+    for field, value in update_data.items():
+        if value is not None:
+            setattr(employee, field, value)
+    
+    # Guardar cambios
+    try:
+        session.add(employee)
+        session.commit()
+        session.refresh(employee)
+        return employee
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al actualizar: {str(e)}")
+
+# 4. CREAR EMPLEADO MANUAL (POST) - *** MODIFICADO CON GENERACIÓN DE CREDENCIALES ***
 @router.post("/", response_model=EmployeeCreateResponse, status_code=status.HTTP_201_CREATED)
 def create_employee(payload: EmployeeCreate, session: Session = Depends(get_session)):
     
@@ -130,13 +184,6 @@ def create_employee(payload: EmployeeCreate, session: Session = Depends(get_sess
 
     # B) Separar Beneficiarios (Tu lógica original)
     employee_dict = payload.model_dump(exclude={"beneficiaries"})
-
-    # Construir nombre completo a partir de partes
-    employee_dict["nombre_completo"] = build_full_name(
-        employee_dict.get("nombre"),
-        employee_dict.get("apellido_paterno"),
-        employee_dict.get("apellido_materno"),
-    )
 
     # --- MODIFICACIÓN: Forzamos que sea operativo ---
     employee_dict["es_operativo"] = True
@@ -159,7 +206,9 @@ def create_employee(payload: EmployeeCreate, session: Session = Depends(get_sess
         session.refresh(db_employee) # Obtenemos el ID recién creado
 
         # 2. GENERACIÓN AUTOMÁTICA DE CREDENCIALES
-        username = generate_username(db_employee.nombre_completo, db_employee.id)
+        # Construir nombre completo a partir de partes individuales
+        full_name = build_full_name(db_employee.nombre, db_employee.apellido_paterno, db_employee.apellido_materno)
+        username = generate_username(full_name, db_employee.id)
         plain_pin = "".join([str(secrets.randbelow(10)) for _ in range(4)]) # PIN "1234"
 
         # 3. Actualizamos el objeto con las credenciales: hashed + encrypted
@@ -178,16 +227,20 @@ def create_employee(payload: EmployeeCreate, session: Session = Depends(get_sess
             "generated_credentials": {
                 "username": username,
                 "pin_inicial": plain_pin, # SE MUESTRA SOLO AQUÍ
-                "mensaje": "¡Atención! Entrega este PIN al empleado. No se podrá ver después."
+                "mensaje": "Atencion! Entrega este PIN al empleado. No se podra ver despues."
             }
         }
 
     except Exception as e:
         session.rollback()
-        raise HTTPException(status_code=500, detail=f"Error al guardar: {str(e)}")
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"[ERROR_DETALLE] {str(e)}")
+        print(f"[TRACEBACK]\n{error_trace}")
+        raise HTTPException(status_code=500, detail=f"Error al guardar: {str(e)[:200]}")
 
 
-# 4. CARGA MASIVA DESDE CSV/EXCEL (POST) - (INTACTO)
+# 5. CARGA MASIVA DESDE CSV/EXCEL (POST) - (INTACTO)
 @router.post("/upload-csv/")
 async def upload_employees_csv(
     file: UploadFile = File(...), 

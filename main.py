@@ -31,7 +31,8 @@ app = FastAPI(
 
 # --- 3. CONFIGURACIÓN DE CORS ---
 origins = [
-    "https://kin-frontend-production-a564.up.railway.app/auth/login",
+    "https://kin-frontend-production-a564.up.railway.app/",
+    "localhost:3000"
 ]
 
 app.add_middleware(

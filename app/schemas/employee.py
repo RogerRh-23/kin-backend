@@ -1,7 +1,12 @@
 from datetime import date, datetime
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Any, Dict
 from pydantic import BaseModel, Field, model_validator, field_validator, ConfigDict
 from decimal import Decimal
+import json
+from urllib.request import urlopen
+from urllib.error import URLError, HTTPError
+
+_CP_CACHE: Dict[str, Dict[str, Any]] = {}
 
 # --- Helper: Convertir fechas desde múltiples formatos ---
 def parse_date(value: Union[str, date]) -> date:
@@ -30,6 +35,118 @@ def parse_date(value: Union[str, date]) -> date:
         pass
     
     raise ValueError(f"Formato de fecha no soportado: {value}. Use YYYY-MM-DD o DD/MM/YYYY")
+
+def _normalize_text(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    return cleaned if cleaned else None
+
+def _normalize_cp(value: str) -> str:
+    cp = "".join(ch for ch in str(value) if ch.isdigit())
+    if len(cp) != 5:
+        raise ValueError("El código postal debe tener exactamente 5 dígitos")
+    return cp
+
+def _fetch_cp_from_copomex(cp: str) -> Optional[Dict[str, Any]]:
+    url = f"https://api.copomex.com/query/info_cp/{cp}?token=pruebas&type=simplified"
+    try:
+        with urlopen(url, timeout=4) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (URLError, HTTPError, TimeoutError, json.JSONDecodeError):
+        return None
+
+    response_data = payload.get("response")
+    if not isinstance(response_data, dict):
+        return None
+
+    colonias = response_data.get("asentamiento") or []
+    if isinstance(colonias, str):
+        colonias = [colonias]
+
+    return {
+        "estado": _normalize_text(response_data.get("estado")),
+        "municipio": _normalize_text(response_data.get("municipio")),
+        "colonias": [c for c in (_normalize_text(c) for c in colonias) if c],
+    }
+
+def _fetch_cp_from_sepomex(cp: str) -> Optional[Dict[str, Any]]:
+    url = f"https://sepomex.icalialabs.com/api/v1/zip_codes?zip_code={cp}"
+    try:
+        with urlopen(url, timeout=4) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (URLError, HTTPError, TimeoutError, json.JSONDecodeError):
+        return None
+
+    zip_codes = payload.get("zip_codes") or []
+    if not isinstance(zip_codes, list) or not zip_codes:
+        return None
+
+    first = zip_codes[0]
+    estado = _normalize_text(first.get("d_estado"))
+    municipio = _normalize_text(first.get("d_mnpio"))
+    colonias = [
+        c for c in (_normalize_text(item.get("d_asenta")) for item in zip_codes) if c
+    ]
+
+    return {
+        "estado": estado,
+        "municipio": municipio,
+        "colonias": sorted(set(colonias)),
+    }
+
+def _resolve_cp_data(cp: str) -> Optional[Dict[str, Any]]:
+    if cp in _CP_CACHE:
+        return _CP_CACHE[cp]
+
+    cp_data = _fetch_cp_from_copomex(cp) or _fetch_cp_from_sepomex(cp)
+    if cp_data:
+        _CP_CACHE[cp] = cp_data
+    return cp_data
+
+def _format_structured_address(address: "AddressInput", field_name: str) -> str:
+    cp = _normalize_cp(address.codigo_postal)
+    estado = _normalize_text(address.estado)
+    municipio = _normalize_text(address.municipio)
+    colonia = _normalize_text(address.colonia)
+    calle_numero = _normalize_text(address.calle_numero)
+
+    if not calle_numero:
+        raise ValueError(f"{field_name}: calle_numero es obligatorio")
+
+    if address.autocompletar_por_cp and (not estado or not municipio or not colonia):
+        cp_data = _resolve_cp_data(cp)
+        if cp_data:
+            estado = estado or cp_data.get("estado")
+            municipio = municipio or cp_data.get("municipio")
+            colonias = cp_data.get("colonias") or []
+
+            if not colonia and colonias:
+                colonia = colonias[0]
+            elif colonia and colonias and colonia not in colonias:
+                raise ValueError(
+                    f"{field_name}: la colonia '{colonia}' no corresponde al código postal {cp}"
+                )
+
+    if not estado or not municipio or not colonia:
+        raise ValueError(
+            f"{field_name}: faltan datos de estado/municipio/colonia y no se pudieron autocompletar con el código postal {cp}"
+        )
+
+    return f"{estado}, {municipio}, {colonia}, {calle_numero}, CP {cp}"
+
+class AddressInput(BaseModel):
+    estado: Optional[str] = Field(default=None)
+    municipio: Optional[str] = Field(default=None)
+    colonia: Optional[str] = Field(default=None)
+    calle_numero: str
+    codigo_postal: str
+    autocompletar_por_cp: bool = True
+
+    @field_validator("codigo_postal", mode="before")
+    @classmethod
+    def normalize_codigo_postal(cls, v):
+        return _normalize_cp(v)
 
 # --- Esquema para Beneficiarios ---
 class BeneficiaryBase(BaseModel):
@@ -124,6 +241,30 @@ class EmployeeBase(BaseModel):
 # --- Esquema para cuando RECIBES datos (Create) ---
 class EmployeeCreate(EmployeeBase):
     beneficiaries: List[BeneficiaryBase] = Field(default_factory=list)
+
+    @model_validator(mode='before')
+    @classmethod
+    def normalize_addresses(cls, values):
+        if not isinstance(values, dict):
+            return values
+
+        address_fields = {
+            "domicilio_completo": "Domicilio personal",
+            "domicilio_laboral": "Domicilio laboral",
+            "domicilio_fiscal": "Domicilio fiscal",
+        }
+
+        for field_name, label in address_fields.items():
+            raw_value = values.get(field_name)
+            if isinstance(raw_value, dict):
+                address = AddressInput(**raw_value)
+                values[field_name] = _format_structured_address(address, label)
+            else:
+                raise ValueError(
+                    f"{label} debe enviarse como objeto con este orden: estado, municipio, colonia, calle_numero, codigo_postal"
+                )
+
+        return values
 
     @model_validator(mode='after')
     def validate_identity_dates(self) -> 'EmployeeCreate':
@@ -235,6 +376,36 @@ class EmployeeUpdate(BaseModel):
     talla_pantalon: Optional[str] = None
     talla_calzado: Optional[str] = None
     tiene_zapato_casquillo: Optional[bool] = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def normalize_addresses(cls, values):
+        if not isinstance(values, dict):
+            return values
+
+        address_fields = {
+            "domicilio_completo": "Domicilio personal",
+            "domicilio_laboral": "Domicilio laboral",
+            "domicilio_fiscal": "Domicilio fiscal",
+        }
+
+        for field_name, label in address_fields.items():
+            if field_name not in values:
+                continue
+
+            raw_value = values[field_name]
+            if raw_value is None:
+                continue
+
+            if isinstance(raw_value, dict):
+                address = AddressInput(**raw_value)
+                values[field_name] = _format_structured_address(address, label)
+            else:
+                raise ValueError(
+                    f"{label} debe enviarse como objeto con este orden: estado, municipio, colonia, calle_numero, codigo_postal"
+                )
+
+        return values
     
     # --- Validadores para convertir fechas desde múltiples formatos ---
     @field_validator('fecha_nacimiento', 'fecha_alta_imss', mode='before')

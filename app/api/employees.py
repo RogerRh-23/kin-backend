@@ -1,13 +1,16 @@
 import secrets
+import json
 import pandas as pd
 from io import StringIO
 from decimal import Decimal, InvalidOperation
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Body
 from sqlmodel import Session, select
 from sqlalchemy import func
 from pydantic import BaseModel
+from urllib.request import urlopen
+from urllib.error import URLError, HTTPError
 from app.core.db import get_session  
 from app.models.employee import Employee, Beneficiary
 from app.schemas.employee import EmployeeCreate, EmployeeRead, EmployeeUpdate
@@ -18,6 +21,8 @@ from app.core.utils import generate_username
 from app.api.auth import require_role
 
 router = APIRouter(prefix="/employees", tags=["Employees"])
+
+_CP_CACHE: Dict[str, Dict[str, Any]] = {}
 
 # ==========================================
 #  ESQUEMA DE RESPUESTA ESPECIAL (Solo para creación)
@@ -53,6 +58,76 @@ def clean_str(val):
     return str(val).strip()
 
 
+def normalize_cp(cp: str) -> str:
+    digits = "".join(ch for ch in str(cp) if ch.isdigit())
+    if len(digits) != 5:
+        raise HTTPException(status_code=422, detail="El código postal debe tener 5 dígitos")
+    return digits
+
+
+def fetch_cp_from_copomex(cp: str) -> Optional[Dict[str, Any]]:
+    url = f"https://api.copomex.com/query/info_cp/{cp}?token=pruebas&type=simplified"
+    try:
+        with urlopen(url, timeout=4) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (URLError, HTTPError, TimeoutError, json.JSONDecodeError):
+        return None
+
+    data = payload.get("response")
+    if not isinstance(data, dict):
+        return None
+
+    colonias = data.get("asentamiento") or []
+    if isinstance(colonias, str):
+        colonias = [colonias]
+
+    return {
+        "codigo_postal": cp,
+        "estado": (data.get("estado") or "").strip() or None,
+        "municipio": (data.get("municipio") or "").strip() or None,
+        "colonias": sorted({str(c).strip() for c in colonias if str(c).strip()}),
+        "fuente": "copomex"
+    }
+
+
+def fetch_cp_from_sepomex(cp: str) -> Optional[Dict[str, Any]]:
+    url = f"https://sepomex.icalialabs.com/api/v1/zip_codes?zip_code={cp}"
+    try:
+        with urlopen(url, timeout=4) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (URLError, HTTPError, TimeoutError, json.JSONDecodeError):
+        return None
+
+    zip_codes = payload.get("zip_codes") or []
+    if not isinstance(zip_codes, list) or not zip_codes:
+        return None
+
+    first = zip_codes[0]
+    colonias = sorted({
+        str(item.get("d_asenta", "")).strip()
+        for item in zip_codes
+        if str(item.get("d_asenta", "")).strip()
+    })
+
+    return {
+        "codigo_postal": cp,
+        "estado": str(first.get("d_estado", "")).strip() or None,
+        "municipio": str(first.get("d_mnpio", "")).strip() or None,
+        "colonias": colonias,
+        "fuente": "sepomex"
+    }
+
+
+def resolve_cp_data(cp: str) -> Optional[Dict[str, Any]]:
+    if cp in _CP_CACHE:
+        return _CP_CACHE[cp]
+
+    result = fetch_cp_from_copomex(cp) or fetch_cp_from_sepomex(cp)
+    if result:
+        _CP_CACHE[cp] = result
+    return result
+
+
 # ==========================================
 #  NOMBRE COMPLETO (Helper)
 # ==========================================
@@ -80,6 +155,21 @@ def build_full_name(nombre, apellido_paterno, apellido_materno):
 def get_employees(session: Session = Depends(get_session)):
     employees = session.exec(select(Employee)).all()
     return employees
+
+
+# 1.1 AUTOCOMPLETAR DIRECCIÓN POR CÓDIGO POSTAL (GET)
+@router.get("/postal-code/{cp}")
+def get_postal_code_data(cp: str):
+    """
+    Retorna estado, municipio y colonias sugeridas para autocompletar domicilios.
+    """
+    normalized_cp = normalize_cp(cp)
+    cp_data = resolve_cp_data(normalized_cp)
+
+    if not cp_data:
+        raise HTTPException(status_code=404, detail="No se encontró información para ese código postal")
+
+    return cp_data
 
 # --- ENDPOINT: WIDGET DE ALERTA (GET) ---
 @router.get("/missing-credentials-count")

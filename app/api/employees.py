@@ -15,7 +15,7 @@ from urllib.error import URLError, HTTPError
 import json
 import logging
 import os
-from openpyxl import load_workbook
+import xlsxwriter
 from app.core.db import get_session  
 from app.models.employee import Employee, Beneficiary
 from app.schemas.employee import EmployeeCreate, EmployeeRead, EmployeeUpdate
@@ -813,23 +813,14 @@ def reveal_pin(employee_id: int, session: Session = Depends(get_session), _admin
 @router.get("/export/altas-imss")
 def export_empleados_excel(session: Session = Depends(get_session)):
     """
-    Exporta empleados a Excel usando el template definido.
+    Exporta empleados a Excel usando xlsxwriter.
     Retorna un archivo descargable con formato IMSS.
     
     Mapeo de campos del schema Employee a columnas Excel:
     - Puedes ajustar los índices de columna (A, B, C, etc.) según tu template
     - Agrega nuevas líneas para incluir más campos si es necesario
     """
-    template_path = os.path.join(os.path.dirname(__file__), "../../templates/Altas IMSS -  ALTAS LACS vacio.xlsx")
-    
-    if not os.path.exists(template_path):
-        raise HTTPException(status_code=404, detail=f"Template no encontrado en {template_path}")
-    
     try:
-        # Cargar template
-        wb = load_workbook(template_path)
-        ws = wb.active
-        
         # Obtener todos los empleados activos
         statement = select(Employee).where(Employee.is_active == True).order_by(Employee.id)
         empleados = session.exec(statement).all()
@@ -899,11 +890,27 @@ def export_empleados_excel(session: Session = Depends(get_session)):
             "BD": ("experiencia_anterior", "Experiencia Anterior"),
         }
         
+        # Crear archivo Excel
+        output_path = f"/tmp/altas_imss_{date.today().isoformat()}.xlsx"
+        workbook = xlsxwriter.Workbook(output_path)
+        worksheet = workbook.add_worksheet()
+        
+        # Escribir encabezados
+        header_format = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3'})
+        col_num = 0
+        col_letters = []
+        for col_letter in column_mapping.keys():
+            col_letters.append(col_letter)
+            _, description = column_mapping[col_letter]
+            worksheet.write(0, col_num, description, header_format)
+            col_num += 1
+        
         # Llenar datos fila por fila
-        row = 2  # Asumir que fila 1 es encabezado
+        row = 1
         
         for emp in empleados:
-            for col, (field_name, _) in column_mapping.items():
+            col_num = 0
+            for col_letter, (field_name, _) in column_mapping.items():
                 value = getattr(emp, field_name, None)
                 
                 # Formatear valores según tipo
@@ -918,13 +925,12 @@ def export_empleados_excel(session: Session = Depends(get_session)):
                 else:
                     value = str(value)
                 
-                ws[f'{col}{row}'] = value
+                worksheet.write(row, col_num, value)
+                col_num += 1
             
             row += 1
         
-        # Guardar en archivo temporal
-        output_path = f"/tmp/altas_imss_{date.today().isoformat()}.xlsx"
-        wb.save(output_path)
+        workbook.close()
         
         # Retornar archivo para descargar
         return FileResponse(

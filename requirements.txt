@@ -16,7 +16,7 @@ h11==0.16.0
 httptools==0.7.1
 idna==3.11
 numpy==2.4.0
-openpyxl==3.9.0
+openpyxl==3.8.0
 pandas==2.3.3
 passlib==1.7.4
 psycopg2-binary==2.9.11

@@ -22,40 +22,40 @@ class Employee(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     
     # --- BLOQUE 1: IDENTIFICACIÓN (Columnas A-G) ---
-    nombre: str
-    apellido_paterno: str
-    apellido_materno: str
+    nombre: Optional[str] = Field(default=None)  # Ahora permite None
+    apellido_paterno: Optional[str] = Field(default=None)  # Ahora permite None
+    apellido_materno: Optional[str] = Field(default=None)  # Ahora permite None
     nss: str = Field(index=True, unique=True)
-    rfc: str = Field(unique=True)
+    rfc: Optional[str] = Field(default=None, unique=True)  # Ahora permite None
     curp: Optional[str] = Field(default=None, unique=True)  # Nullable para datos incompletos
-    domicilio_completo: str = "NA" # Incluye Calle, Num, Col, Alcaldía, CP
+    domicilio_completo: Optional[str] = Field(default=None) # Ahora permite None
     
     # --- BLOQUE 2: PUESTO Y ACTIVIDADES (Columnas I-J) ---
-    puesto: str = "NA"
-    actividades_detalle: str = "NA" # "Inspeccionar material para corroborar..."
+    puesto: Optional[str] = Field(default=None)
+    actividades_detalle: Optional[str] = Field(default=None)
     puesto_sugerido: Optional[str] = None
     turno_sugerido: Optional[str] = None
     
     # --- BLOQUE 3: CLIENTE Y PAGADORA (Columnas K-Q) ---
-    cliente_nombre: str = "NA"       # Ej: ASPEL MOLDING
-    cliente_rfc: str = "NA"          # Ej: AMM040126UI1
+    cliente_nombre: Optional[str] = Field(default=None)
+    cliente_rfc: Optional[str] = Field(default=None)
     tipo_salario: str = "SALARIO NOMINAL"         # Ej: SALARIO NOMINAL
-    salario_diario: Decimal = Field(default=Decimal("0.00"), max_digits=10, decimal_places=2) # S.D. CIT
+    salario_diario: Optional[Decimal] = Field(default=None, max_digits=10, decimal_places=2) # S.D. CIT
     factor_integracion: Decimal = Field(default=Decimal("1.0493"), max_digits=6, decimal_places=4)
-    sdi: Decimal = Field(default=Decimal("0.00"), max_digits=10, decimal_places=2) # S.D.I. IMSS
-    empresa_pagadora: str = "NA"     # Ej: LACS A.C.
+    sdi: Optional[Decimal] = Field(default=None, max_digits=10, decimal_places=2) # S.D.I. IMSS
+    empresa_pagadora: Optional[str] = Field(default=None)
     
     # --- BLOQUE 4: SEGURIDAD SOCIAL Y RT (Columnas R-V) ---
     fecha_alta_imss: Optional[date] = None
     tiene_infonavit: str = "NO"      # "SI" o "NO"
     numero_credito_infonavit: Optional[str] = None
-    registro_patronal: str = "NA"    # Ej: Y-5451-0271-05
-    clase_rt: str = "NA"             # Ej: III
+    registro_patronal: Optional[str] = Field(default=None)
+    clase_rt: Optional[str] = Field(default=None)
     
     # --- BLOQUE 5: DATOS PERSONALES (Columnas W-Z) ---
     fecha_nacimiento: Optional[date] = None
-    estado_civil: str = "NA"         # SOLTERO / CASADO
-    sexo: str = "NA"                 # HOMBRE / MUJER
+    estado_civil: Optional[str] = Field(default=None)
+    sexo: Optional[str] = Field(default=None)
     nacionalidad: str = "MEXICANO"
     correo: Optional[str] = None
     numero_telefono: Optional[str] = None
@@ -69,25 +69,25 @@ class Employee(SQLModel, table=True):
     experiencia_anterior: Optional[str] = None
     
     # --- BLOQUE 6: CONTRATO Y LOGÍSTICA (Columnas AA-AE) ---
-    domicilio_laboral: str = "NA"
-    tipo_contrato: str = "NA"        # DETERMINADO, INDETERMINADO, PRUEBA
-    duracion_contrato: str = "NA"    # Ej: 6 MESES
+    domicilio_laboral: Optional[str] = Field(default=None)
+    tipo_contrato: Optional[str] = Field(default=None)
+    duracion_contrato: Optional[str] = Field(default=None)
     nombre_proyecto: Optional[str] = None
     consiste_proyecto: Optional[str] = None
     
     # --- BLOQUE 7: PAGOS Y BANCO (Columnas AF-AJ) ---
-    forma_pago: str = "NA"           # SEMANAL / QUINCENAL
-    se_le_paga_por: str = "NA"       # Ej: SERVICIOS DE CALIDAD
-    sueldo_mensual_bruto: Decimal = Field(default=Decimal("0.00"), max_digits=10, decimal_places=2)
-    sueldo_mensual_neto: Decimal = Field(default=Decimal("0.00"), max_digits=10, decimal_places=2)
-    banco: Optional[str] = Field(default="NA")
-    cuenta_bancaria: Optional[str] = Field(default="NA")
-    clabe_interbancaria: Optional[str] = Field(default="NA")
+    forma_pago: Optional[str] = Field(default=None)
+    se_le_paga_por: Optional[str] = Field(default=None)
+    sueldo_mensual_bruto: Optional[Decimal] = Field(default=None, max_digits=10, decimal_places=2)
+    sueldo_mensual_neto: Optional[Decimal] = Field(default=None, max_digits=10, decimal_places=2)
+    banco: Optional[str] = Field(default=None)
+    cuenta_bancaria: Optional[str] = Field(default=None)
+    clabe_interbancaria: Optional[str] = Field(default=None)
     
     # --- BLOQUE 8: EQUIPO Y TALLAS (Para Control Operativo) ---
-    talla_camisa: Optional[str] = Field(default="NA")
-    talla_pantalon: Optional[str] = Field(default="NA")
-    talla_calzado: Optional[str] = Field(default="NA")
+    talla_camisa: Optional[str] = Field(default=None)
+    talla_pantalon: Optional[str] = Field(default=None)
+    talla_calzado: Optional[str] = Field(default=None)
     tiene_zapato_casquillo: bool = False
     
     # --- RELACIONES ---

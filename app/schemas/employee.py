@@ -156,37 +156,37 @@ class BeneficiaryBase(BaseModel):
 
 # --- Esquema Principal de Empleado ---
 class EmployeeBase(BaseModel):
-    # Identificación Básica - Mínimos requeridos
-    nombre: str
-    apellido_paterno: str
-    apellido_materno: str
+    # Identificación Básica - NSS es el único requerido
+    nombre: Optional[str] = None
+    apellido_paterno: Optional[str] = None
+    apellido_materno: Optional[str] = None
     nss: str
-    rfc: str
-    curp: str = "NA"  # Opcional con default
+    rfc: Optional[str] = None
+    curp: Optional[str] = None
     
-    # Resto son opcionales con valores por defecto
-    domicilio_completo: Optional[str] = "NA"
+    # Resto son opcionales con valores None (más limpio que "NA")
+    domicilio_completo: Optional[str] = None
     
     # Datos Laborales (CIT / IMSS)
-    puesto: Optional[str] = "NA"
-    actividades_detalle: Optional[str] = "NA"
+    puesto: Optional[str] = None
+    actividades_detalle: Optional[str] = None
     puesto_sugerido: Optional[str] = None
     turno_sugerido: Optional[str] = None
-    cliente_nombre: Optional[str] = "NA"
-    cliente_rfc: Optional[str] = "NA"
+    cliente_nombre: Optional[str] = None
+    cliente_rfc: Optional[str] = None
     tipo_salario: Optional[str] = "SALARIO NOMINAL"
-    salario_diario: Decimal = Decimal("0.00")
+    salario_diario: Optional[Decimal] = None
     factor_integracion: Decimal = Decimal("1.0493")
-    sdi: Decimal = Decimal("0.00")
-    empresa_pagadora: Optional[str] = "NA"
+    sdi: Optional[Decimal] = None
+    empresa_pagadora: Optional[str] = None
     fecha_alta_imss: Optional[date] = None
-    registro_patronal: Optional[str] = "NA"
-    clase_rt: Optional[str] = "NA"
+    registro_patronal: Optional[str] = None
+    clase_rt: Optional[str] = None
     
     # Datos Personales
     fecha_nacimiento: Optional[date] = None
-    estado_civil: Optional[str] = "NA"
-    sexo: Optional[str] = "NA"
+    estado_civil: Optional[str] = None
+    sexo: Optional[str] = None
     nacionalidad: str = "MEXICANO"
     correo: Optional[str] = None
     numero_telefono: Optional[str] = None
@@ -198,31 +198,31 @@ class EmployeeBase(BaseModel):
     enfermedades_alergias: Optional[str] = None
     medicamentos_especiales: Optional[str] = None
     experiencia_anterior: Optional[str] = None
-    domicilio_laboral: Optional[str] = "NA"
+    domicilio_laboral: Optional[str] = None
     
     # Seguridad Social
     tiene_infonavit: Optional[str] = "NO"
     numero_credito_infonavit: Optional[str] = None
     
     # Contrato y Proyecto
-    tipo_contrato: Optional[str] = "NA"
-    duracion_contrato: Optional[str] = "NA"
-    nombre_proyecto: Optional[str] = "NA"
-    consiste_proyecto: Optional[str] = "NA"
+    tipo_contrato: Optional[str] = None
+    duracion_contrato: Optional[str] = None
+    nombre_proyecto: Optional[str] = None
+    consiste_proyecto: Optional[str] = None
     
     # Nómina y Pagos
-    forma_pago: Optional[str] = "NA"
-    se_le_paga_por: Optional[str] = "NA"
-    sueldo_mensual_bruto: Decimal = Decimal("0.00")
-    sueldo_mensual_neto: Decimal = Decimal("0.00")
-    banco: Optional[str] = "NA"
-    cuenta_bancaria: Optional[str] = "NA"
-    clabe_interbancaria: Optional[str] = "NA"
+    forma_pago: Optional[str] = None
+    se_le_paga_por: Optional[str] = None
+    sueldo_mensual_bruto: Optional[Decimal] = None
+    sueldo_mensual_neto: Optional[Decimal] = None
+    banco: Optional[str] = None
+    cuenta_bancaria: Optional[str] = None
+    clabe_interbancaria: Optional[str] = None
     
     # Tallas (Control Operativo)
-    talla_camisa: Optional[str] = "NA"
-    talla_pantalon: Optional[str] = "NA"
-    talla_calzado: Optional[str] = "NA"
+    talla_camisa: Optional[str] = None
+    talla_pantalon: Optional[str] = None
+    talla_calzado: Optional[str] = None
     tiene_zapato_casquillo: bool = False
 
     # Datos para App Operativa

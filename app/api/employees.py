@@ -39,24 +39,29 @@ class EmployeeCreateResponse(BaseModel):
 
 def clean_money(val):
     if pd.isna(val) or str(val).strip().upper() in ["NA", "N/A", "", "nan"]:
-        return Decimal("0.00")
+        return None  # Retorna None en lugar de 0
     clean_str = str(val).replace('$', '').replace(',', '').strip()
     try:
-        return Decimal(clean_str)
+        result = Decimal(clean_str)
+        return result if result != 0 else None
     except InvalidOperation:
-        return Decimal("0.00")
+        return None
 
 def clean_date(val):
     if pd.isna(val) or str(val).strip().upper() in ["NA", "N/A", "", "nan"]:
         return None
     try:
         return pd.to_datetime(val, dayfirst=True).date()
-    except:
+    except Exception as e:
+        print(f"[CLEAN_DATE_ERROR] No se pudo parsear fecha: {val} - {type(e).__name__}")
         return None
 
 def clean_str(val):
-    if pd.isna(val) or str(val).strip().upper() in ["NA", "N/A", "", "nan"]:
-        return "NA"
+    if pd.isna(val) or val is None:
+        return None  # Retorna None en lugar de "NA"
+    val_str = str(val).strip().upper()
+    if val_str in ["NA", "N/A", "", "NAN", "NONE"]:
+        return None
     return str(val).strip()
 
 
@@ -499,22 +504,41 @@ async def upload_employees_csv(
                 "es_operativo": True 
             }
 
-            if employee_dict["nss"] == "NA" or not employee_dict["nss"]:
+            if not employee_dict.get("nss") or employee_dict["nss"] is None:
+                 errors.append(f"Fila {real_line}: NSS requerido (no puede estar vacío)")
                  continue
 
-            new_emp = Employee(**employee_dict)
-            
-            # NOTA: Aquí podríamos generar usuario/pin también, pero 
-            # haría la carga masiva más lenta. Sugerencia: Dejarlo así y 
-            # generar credenciales bajo demanda o en un segundo paso.
-            
-            session.add(new_emp)
-            session.flush() 
-            created_count += 1
+            try:
+                new_emp = Employee(**employee_dict)
+                
+                # NOTA: Aquí podríamos generar usuario/pin también, pero 
+                # haría la carga masiva más lenta. Sugerencia: Dejarlo así y 
+                # generar credenciales bajo demanda o en un segundo paso.
+                
+                session.add(new_emp)
+                session.flush() 
+                created_count += 1
+                
+            except ValueError as ve:
+                session.rollback()
+                print(f"[CSV_VALIDATION_ERROR] Fila {real_line}: {str(ve)}")
+                errors.append(f"Fila {real_line}: Error de validación: {str(ve)}")
+                continue
+            except Exception as e:
+                session.rollback()
+                print(f"[CSV_ERROR] Fila {real_line}: {type(e).__name__}: {str(e)}")
+                errors.append(f"Fila {real_line}: {str(e)}")
+                continue
 
+        except KeyError as ke:
+            session.rollback()
+            print(f"[CSV_KEY_ERROR] Fila {real_line}: Columna no encontrada: {str(ke)}")
+            errors.append(f"Fila {real_line}: Columna faltante: {str(ke)}")
+            continue
         except Exception as e:
             session.rollback()
-            errors.append(f"Fila {real_line}: {str(e)}")
+            print(f"[CSV_ROW_ERROR] Fila {real_line}: {type(e).__name__}: {str(e)}")
+            errors.append(f"Fila {real_line}: Error inesperado: {str(e)}")
             continue
 
     session.commit()

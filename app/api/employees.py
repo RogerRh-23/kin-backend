@@ -11,6 +11,8 @@ from sqlalchemy import func
 from pydantic import BaseModel
 from urllib.request import urlopen
 from urllib.error import URLError, HTTPError
+import json
+import logging
 from app.core.db import get_session  
 from app.models.employee import Employee, Beneficiary
 from app.schemas.employee import EmployeeCreate, EmployeeRead, EmployeeUpdate
@@ -67,39 +69,49 @@ def normalize_cp(cp: str) -> str:
 
 def fetch_cp_from_copomex(cp: str) -> Optional[Dict[str, Any]]:
     url = f"https://api.copomex.com/query/info_cp/{cp}?token=pruebas&type=simplified"
+    print(f"[COPOMEX] Consultando: {url}")
     try:
         with urlopen(url, timeout=4) as response:
             payload = json.loads(response.read().decode("utf-8"))
-    except (URLError, HTTPError, TimeoutError, json.JSONDecodeError):
+        print(f"[COPOMEX_RESPONSE] {payload}")
+    except (URLError, HTTPError, TimeoutError, json.JSONDecodeError) as e:
+        print(f"[COPOMEX_ERROR] {type(e).__name__}: {str(e)}")
         return None
 
     data = payload.get("response")
     if not isinstance(data, dict):
+        print(f"[COPOMEX_ERROR] Response no es dict: {data}")
         return None
 
     colonias = data.get("asentamiento") or []
     if isinstance(colonias, str):
         colonias = [colonias]
 
-    return {
+    result = {
         "codigo_postal": cp,
         "estado": (data.get("estado") or "").strip() or None,
         "municipio": (data.get("municipio") or "").strip() or None,
         "colonias": sorted({str(c).strip() for c in colonias if str(c).strip()}),
         "fuente": "copomex"
     }
+    print(f"[COPOMEX_RESULT] {result}")
+    return result
 
 
 def fetch_cp_from_sepomex(cp: str) -> Optional[Dict[str, Any]]:
     url = f"https://sepomex.icalialabs.com/api/v1/zip_codes?zip_code={cp}"
+    print(f"[SEPOMEX] Consultando: {url}")
     try:
         with urlopen(url, timeout=4) as response:
             payload = json.loads(response.read().decode("utf-8"))
-    except (URLError, HTTPError, TimeoutError, json.JSONDecodeError):
+        print(f"[SEPOMEX_RESPONSE] {payload}")
+    except (URLError, HTTPError, TimeoutError, json.JSONDecodeError) as e:
+        print(f"[SEPOMEX_ERROR] {type(e).__name__}: {str(e)}")
         return None
 
     zip_codes = payload.get("zip_codes") or []
     if not isinstance(zip_codes, list) or not zip_codes:
+        print(f"[SEPOMEX_ERROR] zip_codes vacío o inválido: {zip_codes}")
         return None
 
     first = zip_codes[0]
@@ -109,13 +121,15 @@ def fetch_cp_from_sepomex(cp: str) -> Optional[Dict[str, Any]]:
         if str(item.get("d_asenta", "")).strip()
     })
 
-    return {
+    result = {
         "codigo_postal": cp,
         "estado": str(first.get("d_estado", "")).strip() or None,
         "municipio": str(first.get("d_mnpio", "")).strip() or None,
         "colonias": colonias,
         "fuente": "sepomex"
     }
+    print(f"[SEPOMEX_RESULT] {result}")
+    return result
 
 
 def resolve_cp_data(cp: str) -> Optional[Dict[str, Any]]:
@@ -162,13 +176,24 @@ def get_employees(session: Session = Depends(get_session)):
 def get_postal_code_data(cp: str):
     """
     Retorna estado, municipio y colonias sugeridas para autocompletar domicilios.
+    Frontend envía SOLO el CP, backend devuelve los datos para autocompletar.
     """
-    normalized_cp = normalize_cp(cp)
+    print(f"\n[POSTAL_CODE_REQUEST] CP recibido: {cp}")
+    
+    try:
+        normalized_cp = normalize_cp(cp)
+        print(f"[POSTAL_CODE] CP normalizado: {normalized_cp}")
+    except HTTPException as e:
+        print(f"[POSTAL_CODE_ERROR] Error al normalizar CP: {e.detail}")
+        raise
+    
     cp_data = resolve_cp_data(normalized_cp)
-
+    
     if not cp_data:
+        print(f"[POSTAL_CODE_ERROR] No se encontró información para CP: {normalized_cp}")
         raise HTTPException(status_code=404, detail="No se encontró información para ese código postal")
-
+    
+    print(f"[POSTAL_CODE_SUCCESS] Datos retornados: {cp_data}")
     return cp_data
 
 # --- ENDPOINT: WIDGET DE ALERTA (GET) ---

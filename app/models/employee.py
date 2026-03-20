@@ -28,7 +28,15 @@ class Employee(SQLModel, table=True):
     nss: str = Field(index=True, unique=True)
     rfc: Optional[str] = Field(default=None, unique=True)  # Ahora permite None
     curp: Optional[str] = Field(default=None, unique=True)  # Nullable para datos incompletos
-    domicilio_completo: Optional[str] = Field(default=None) # Ahora permite None
+    
+    # --- DOMICILIO COMPLETO (Dirección personal - Desglosada) ---
+    domicilio_calle: Optional[str] = Field(default=None)  # Ej: "Calle Principal 123"
+    domicilio_numero: Optional[str] = Field(default=None)  # Ej: "123"
+    domicilio_estado: Optional[str] = Field(default=None)  # Ej: "Jalisco"
+    domicilio_municipio: Optional[str] = Field(default=None)  # Ej: "Guadalajara"
+    domicilio_colonia: Optional[str] = Field(default=None)  # Ej: "Centro"
+    domicilio_codigo_postal: Optional[str] = Field(default=None)  # Ej: "44100"
+    domicilio_completo: Optional[str] = Field(default=None) # Campo generado automáticamente
     
     # --- BLOQUE 2: PUESTO Y ACTIVIDADES (Columnas I-J) ---
     puesto: Optional[str] = Field(default=None)
@@ -59,7 +67,14 @@ class Employee(SQLModel, table=True):
     nacionalidad: str = "MEXICANO"
     correo: Optional[str] = None
     numero_telefono: Optional[str] = None
-    domicilio_fiscal: Optional[str] = None
+    # --- DOMICILIO FISCAL (Dirección fiscal - Desglosada) ---
+    domicilio_fiscal_calle: Optional[str] = Field(default=None)
+    domicilio_fiscal_numero: Optional[str] = Field(default=None)
+    domicilio_fiscal_estado: Optional[str] = Field(default=None)
+    domicilio_fiscal_municipio: Optional[str] = Field(default=None)
+    domicilio_fiscal_colonia: Optional[str] = Field(default=None)
+    domicilio_fiscal_codigo_postal: Optional[str] = Field(default=None)
+    domicilio_fiscal: Optional[str] = None  # Campo generado automáticamente
     tipo_sangre: Optional[str] = None
     tiene_fonacot: bool = False
     numero_fonacot: Optional[str] = None
@@ -68,8 +83,14 @@ class Employee(SQLModel, table=True):
     medicamentos_especiales: Optional[str] = None
     experiencia_anterior: Optional[str] = None
     
-    # --- BLOQUE 6: CONTRATO Y LOGÍSTICA (Columnas AA-AE) ---
-    domicilio_laboral: Optional[str] = Field(default=None)
+    # --- DOMICILIO LABORAL (Dirección de trabajo - Desglosada) ---
+    domicilio_laboral_calle: Optional[str] = Field(default=None)
+    domicilio_laboral_numero: Optional[str] = Field(default=None)
+    domicilio_laboral_estado: Optional[str] = Field(default=None)
+    domicilio_laboral_municipio: Optional[str] = Field(default=None)
+    domicilio_laboral_colonia: Optional[str] = Field(default=None)
+    domicilio_laboral_codigo_postal: Optional[str] = Field(default=None)
+    domicilio_laboral: Optional[str] = Field(default=None)  # Campo generado automáticamente
     tipo_contrato: Optional[str] = Field(default=None)
     duracion_contrato: Optional[str] = Field(default=None)
     nombre_proyecto: Optional[str] = None

@@ -136,7 +136,8 @@ def resolve_cp_data(cp: str) -> Optional[Dict[str, Any]]:
     if cp in _CP_CACHE:
         return _CP_CACHE[cp]
 
-    result = fetch_cp_from_copomex(cp) or fetch_cp_from_sepomex(cp)
+    # PRIORIZAR SEPOMEX (más confiable) luego Copomex
+    result = fetch_cp_from_sepomex(cp) or fetch_cp_from_copomex(cp)
     if result:
         _CP_CACHE[cp] = result
     return result

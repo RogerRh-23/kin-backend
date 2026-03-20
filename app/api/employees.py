@@ -6,6 +6,7 @@ from decimal import Decimal, InvalidOperation
 from typing import List, Optional, Dict, Any
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Body
+from fastapi.responses import FileResponse
 from sqlmodel import Session, select
 from sqlalchemy import func
 from pydantic import BaseModel
@@ -13,6 +14,8 @@ from urllib.request import urlopen
 from urllib.error import URLError, HTTPError
 import json
 import logging
+import os
+from openpyxl import load_workbook
 from app.core.db import get_session  
 from app.models.employee import Employee, Beneficiary
 from app.schemas.employee import EmployeeCreate, EmployeeRead, EmployeeUpdate
@@ -804,3 +807,134 @@ def reveal_pin(employee_id: int, session: Session = Depends(get_session), _admin
 
     nombre_display = build_full_name(employee.nombre, employee.apellido_paterno, employee.apellido_materno) or f"EMP-{employee.id}"
     return {"id": employee.id, "nombre": nombre_display, "pin": plain}
+
+
+# --- ENDPOINT: EXPORTAR A EXCEL CON TEMPLATE ---
+@router.get("/export/altas-imss")
+def export_empleados_excel(session: Session = Depends(get_session)):
+    """
+    Exporta empleados a Excel usando el template definido.
+    Retorna un archivo descargable con formato IMSS.
+    
+    Mapeo de campos del schema Employee a columnas Excel:
+    - Puedes ajustar los índices de columna (A, B, C, etc.) según tu template
+    - Agrega nuevas líneas para incluir más campos si es necesario
+    """
+    template_path = os.path.join(os.path.dirname(__file__), "../../templates/Altas IMSS -  ALTAS LACS vacio.xlsx")
+    
+    if not os.path.exists(template_path):
+        raise HTTPException(status_code=404, detail=f"Template no encontrado en {template_path}")
+    
+    try:
+        # Cargar template
+        wb = load_workbook(template_path)
+        ws = wb.active
+        
+        # Obtener todos los empleados activos
+        statement = select(Employee).where(Employee.is_active == True).order_by(Employee.id)
+        empleados = session.exec(statement).all()
+        
+        if not empleados:
+            raise HTTPException(status_code=400, detail="No hay empleados para exportar")
+        
+        # Mapeo de campos del modelo a columnas Excel
+        # Formato: "A": ("nombre_del_campo", "descripción")
+        # AJUSTA LOS ÍNDICES (A, B, C, etc.) SEGÚN TU TEMPLATE IMSS
+        column_mapping = {
+            "A": ("nombre", "Nombre"),
+            "B": ("apellido_paterno", "Apellido Paterno"),
+            "C": ("apellido_materno", "Apellido Materno"),
+            "D": ("fecha_nacimiento", "Fecha Nacimiento"),
+            "E": ("nss", "NSS"),
+            "F": ("rfc", "RFC"),
+            "G": ("curp", "CURP"),
+            "H": ("domicilio_completo", "Domicilio Completo"),
+            "I": ("domicilio_codigo_postal", "Código Postal"),
+            "J": ("domicilio_estado", "Estado"),
+            "K": ("domicilio_municipio", "Municipio"),
+            "L": ("domicilio_colonia", "Colonia"),
+            "M": ("puesto", "Puesto"),
+            "N": ("actividades_detalle", "Actividades"),
+            "O": ("cliente_nombre", "Empresa Cliente"),
+            "P": ("cliente_rfc", "RFC Cliente"),
+            "Q": ("tipo_salario", "Tipo de Salario"),
+            "R": ("salario_diario", "Salario Diario (CIT)"),
+            "S": ("sdi", "SDI (IMSS)"),
+            "T": ("factor_integracion", "Factor de Integración"),
+            "U": ("empresa_pagadora", "Empresa Pagadora"),
+            "V": ("fecha_alta_imss", "Fecha Alta IMSS"),
+            "W": ("registro_patronal", "Registro Patronal"),
+            "X": ("clase_rt", "Clase R.T."),
+            "Y": ("tiene_infonavit", "Tiene Infonavit"),
+            "Z": ("numero_credito_infonavit", "Número Crédito Infonavit"),
+            "AA": ("estado_civil", "Estado Civil"),
+            "AB": ("sexo", "Sexo"),
+            "AC": ("nacionalidad", "Nacionalidad"),
+            "AD": ("correo", "Correo"),
+            "AE": ("numero_telefono", "Teléfono"),
+            "AF": ("domicilio_laboral", "Domicilio Laboral"),
+            "AG": ("domicilio_laboral_codigo_postal", "CP Laboral"),
+            "AH": ("domicilio_laboral_estado", "Estado Laboral"),
+            "AI": ("domicilio_laboral_municipio", "Municipio Laboral"),
+            "AJ": ("domicilio_laboral_colonia", "Colonia Laboral"),
+            "AK": ("tipo_contrato", "Tipo de Contrato"),
+            "AL": ("duracion_contrato", "Duración Contrato"),
+            "AM": ("nombre_proyecto", "Nombre Proyecto"),
+            "AN": ("consiste_proyecto", "¿En qué consiste?"),
+            "AO": ("forma_pago", "Forma de Pago"),
+            "AP": ("se_le_paga_por", "Se le Paga Por"),
+            "AQ": ("sueldo_mensual_bruto", "Sueldo Mensual Bruto"),
+            "AR": ("sueldo_mensual_neto", "Sueldo Mensual Neto"),
+            "AS": ("banco", "Banco"),
+            "AT": ("cuenta_bancaria", "Cuenta Bancaria"),
+            "AU": ("clabe_interbancaria", "CLABE"),
+            "AV": ("talla_camisa", "Talla Camisa"),
+            "AW": ("talla_pantalon", "Talla Pantalón"),
+            "AX": ("talla_calzado", "Talla Calzado"),
+            "AY": ("tipo_sangre", "Tipo de Sangre"),
+            "AZ": ("tiene_fonacot", "Tiene Fonacot"),
+            "BA": ("numero_fonacot", "Número Fonacot"),
+            "BB": ("enfermedades_alergias", "Enfermedades/Alergias"),
+            "BC": ("medicamentos_especiales", "Medicamentos Especiales"),
+            "BD": ("experiencia_anterior", "Experiencia Anterior"),
+        }
+        
+        # Llenar datos fila por fila
+        row = 2  # Asumir que fila 1 es encabezado
+        
+        for emp in empleados:
+            for col, (field_name, _) in column_mapping.items():
+                value = getattr(emp, field_name, None)
+                
+                # Formatear valores según tipo
+                if value is None:
+                    value = ""
+                elif isinstance(value, date):
+                    value = value.isoformat()
+                elif isinstance(value, bool):
+                    value = "SI" if value else "NO"
+                elif isinstance(value, Decimal):
+                    value = float(value)
+                else:
+                    value = str(value)
+                
+                ws[f'{col}{row}'] = value
+            
+            row += 1
+        
+        # Guardar en archivo temporal
+        output_path = f"/tmp/altas_imss_{date.today().isoformat()}.xlsx"
+        wb.save(output_path)
+        
+        # Retornar archivo para descargar
+        return FileResponse(
+            output_path,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename=f"altas_imss_{date.today().isoformat()}.xlsx"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[EXPORT_ERROR] {type(e).__name__}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error al exportar a Excel: {str(e)}")

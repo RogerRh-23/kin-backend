@@ -1,4 +1,4 @@
-annotated-doc==0.0.4
+﻿annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.12.1
 argon2-cffi==21.3.0
@@ -16,15 +16,14 @@ h11==0.16.0
 httptools==0.7.1
 idna==3.11
 numpy==2.4.0
-xlsxwriter==3.1.9
 pandas==2.3.3
 passlib==1.7.4
 psycopg2-binary==2.9.11
 pyasn1==0.6.1
 pycparser==2.23
+pydantic_core==2.41.5
 pydantic==2.12.5
 pydantic-settings==2.12.0
-pydantic_core==2.41.5
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
 python-jose==3.5.0
@@ -36,9 +35,10 @@ six==1.17.0
 SQLAlchemy==2.0.45
 sqlmodel==0.0.31
 starlette==0.50.0
-typing-inspection==0.4.2
 typing_extensions==4.15.0
+typing-inspection==0.4.2
 tzdata==2025.3
 uvicorn==0.40.0
 watchfiles==1.1.1
 websockets==15.0.1
+xlsxwriter==3.1.9

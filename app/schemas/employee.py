@@ -154,6 +154,69 @@ def _format_structured_address(address: AddressInput, field_name: str) -> str:
     return f"{estado}, {municipio}, {colonia}, {calle_numero}, CP {cp}"
 
 
+def _from_legacy_address_parts(values: Dict[str, Any], prefix: str) -> Optional[Dict[str, Any]]:
+    """Convierte llaves legacy de frontend a estructura AddressInput."""
+    estado = _normalize_text(values.get(f"{prefix}_estado"))
+    municipio = _normalize_text(values.get(f"{prefix}_ciudad_municipio"))
+    colonia = _normalize_text(values.get(f"{prefix}_colonia"))
+    calle = _normalize_text(values.get(f"{prefix}_calle"))
+    numero = _normalize_text(values.get(f"{prefix}_numero"))
+    cp = _normalize_text(values.get(f"{prefix}_cp"))
+
+    if not any([estado, municipio, colonia, calle, numero, cp]):
+        return None
+
+    calle_numero = " ".join(p for p in [calle, numero] if p)
+    if not calle_numero:
+        calle_numero = "SN"
+
+    return {
+        "estado": estado,
+        "municipio": municipio,
+        "colonia": colonia,
+        "calle_numero": calle_numero,
+        "codigo_postal": cp,
+        "autocompletar_por_cp": True,
+    }
+
+
+def _normalize_single_address(
+    values: Dict[str, Any],
+    target_field: str,
+    label: str,
+    legacy_prefix: str,
+    required: bool,
+) -> None:
+    raw_value = values.get(target_field)
+
+    # 1) Si viene como objeto (nuevo formato), se normaliza y convierte a string.
+    if isinstance(raw_value, dict):
+        address = AddressInput(**raw_value)
+        values[target_field] = _format_structured_address(address, label)
+        return
+
+    # 2) Si viene como string (excel o cliente legado), se acepta tal cual.
+    if isinstance(raw_value, str):
+        cleaned = raw_value.strip()
+        if cleaned:
+            values[target_field] = cleaned
+            return
+        raw_value = None
+
+    # 3) Si no viene en target_field, intentar construir desde llaves legacy.
+    legacy_dict = _from_legacy_address_parts(values, legacy_prefix)
+    if legacy_dict:
+        address = AddressInput(**legacy_dict)
+        values[target_field] = _format_structured_address(address, label)
+        return
+
+    # 4) Para create, si sigue vacío, dejamos mensaje claro.
+    if required:
+        raise ValueError(
+            f"{label} debe enviarse como string completo o como objeto con: estado, municipio, colonia, calle_numero, codigo_postal"
+        )
+
+
 # --- Esquema para Beneficiarios ---
 class BeneficiaryBase(BaseModel):
     nombre_completo: Optional[str] = "NA"
@@ -245,21 +308,27 @@ class EmployeeCreate(EmployeeBase):
         if not isinstance(values, dict):
             return values
 
-        address_fields = {
-            "domicilio_completo": "Domicilio personal",
-            "domicilio_laboral": "Domicilio laboral",
-            "domicilio_fiscal": "Domicilio fiscal",
-        }
-
-        for field_name, label in address_fields.items():
-            raw_value = values.get(field_name)
-            if isinstance(raw_value, dict):
-                address = AddressInput(**raw_value)
-                values[field_name] = _format_structured_address(address, label)
-            else:
-                raise ValueError(
-                    f"{label} debe enviarse como objeto con este orden: estado, municipio, colonia, calle_numero, codigo_postal"
-                )
+        _normalize_single_address(
+            values,
+            target_field="domicilio_completo",
+            label="Domicilio personal",
+            legacy_prefix="domicilio_personal",
+            required=True,
+        )
+        _normalize_single_address(
+            values,
+            target_field="domicilio_laboral",
+            label="Domicilio laboral",
+            legacy_prefix="domicilio_laboral",
+            required=True,
+        )
+        _normalize_single_address(
+            values,
+            target_field="domicilio_fiscal",
+            label="Domicilio fiscal",
+            legacy_prefix="domicilio_fiscal",
+            required=True,
+        )
 
         return values
 
@@ -359,27 +428,27 @@ class EmployeeUpdate(BaseModel):
         if not isinstance(values, dict):
             return values
 
-        address_fields = {
-            "domicilio_completo": "Domicilio personal",
-            "domicilio_laboral": "Domicilio laboral",
-            "domicilio_fiscal": "Domicilio fiscal",
-        }
-
-        for field_name, label in address_fields.items():
-            if field_name not in values:
-                continue
-
-            raw_value = values[field_name]
-            if raw_value is None:
-                continue
-
-            if isinstance(raw_value, dict):
-                address = AddressInput(**raw_value)
-                values[field_name] = _format_structured_address(address, label)
-            else:
-                raise ValueError(
-                    f"{label} debe enviarse como objeto con este orden: estado, municipio, colonia, calle_numero, codigo_postal"
-                )
+        _normalize_single_address(
+            values,
+            target_field="domicilio_completo",
+            label="Domicilio personal",
+            legacy_prefix="domicilio_personal",
+            required=False,
+        )
+        _normalize_single_address(
+            values,
+            target_field="domicilio_laboral",
+            label="Domicilio laboral",
+            legacy_prefix="domicilio_laboral",
+            required=False,
+        )
+        _normalize_single_address(
+            values,
+            target_field="domicilio_fiscal",
+            label="Domicilio fiscal",
+            legacy_prefix="domicilio_fiscal",
+            required=False,
+        )
 
         return values
 

@@ -22,59 +22,44 @@ class Employee(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     
     # --- BLOQUE 1: IDENTIFICACIÓN (Columnas A-G) ---
-    nombre: Optional[str] = Field(default=None)  # Ahora permite None
-    apellido_paterno: Optional[str] = Field(default=None)  # Ahora permite None
-    apellido_materno: Optional[str] = Field(default=None)  # Ahora permite None
+    nombre: str
+    apellido_paterno: str
+    apellido_materno: str
     nss: str = Field(index=True, unique=True)
-    rfc: Optional[str] = Field(default=None, unique=True)  # Ahora permite None
+    rfc: str = Field(unique=True)
     curp: Optional[str] = Field(default=None, unique=True)  # Nullable para datos incompletos
-    
-    # --- DOMICILIO COMPLETO (Dirección personal - Desglosada) ---
-    domicilio_calle: Optional[str] = Field(default=None)  # Ej: "Calle Principal 123"
-    domicilio_numero: Optional[str] = Field(default=None)  # Ej: "123"
-    domicilio_estado: Optional[str] = Field(default=None)  # Ej: "Jalisco"
-    domicilio_municipio: Optional[str] = Field(default=None)  # Ej: "Guadalajara"
-    domicilio_colonia: Optional[str] = Field(default=None)  # Ej: "Centro"
-    domicilio_codigo_postal: Optional[str] = Field(default=None)  # Ej: "44100"
-    domicilio_completo: Optional[str] = Field(default=None) # Campo generado automáticamente
+    domicilio_completo: str = "NA" # Incluye Calle, Num, Col, Alcaldía, CP
     
     # --- BLOQUE 2: PUESTO Y ACTIVIDADES (Columnas I-J) ---
-    puesto: Optional[str] = Field(default=None)
-    actividades_detalle: Optional[str] = Field(default=None)
+    puesto: str = "NA"
+    actividades_detalle: str = "NA"
     puesto_sugerido: Optional[str] = None
     turno_sugerido: Optional[str] = None
     
     # --- BLOQUE 3: CLIENTE Y PAGADORA (Columnas K-Q) ---
-    cliente_nombre: Optional[str] = Field(default=None)
-    cliente_rfc: Optional[str] = Field(default=None)
+    cliente_nombre: str = "NA"
+    cliente_rfc: str = "NA"
     tipo_salario: str = "SALARIO NOMINAL"         # Ej: SALARIO NOMINAL
-    salario_diario: Optional[Decimal] = Field(default=None, max_digits=10, decimal_places=2) # S.D. CIT
+    salario_diario: Decimal = Field(default=Decimal("0.00"), max_digits=10, decimal_places=2) # S.D. CIT
     factor_integracion: Decimal = Field(default=Decimal("1.0493"), max_digits=6, decimal_places=4)
-    sdi: Optional[Decimal] = Field(default=None, max_digits=10, decimal_places=2) # S.D.I. IMSS
-    empresa_pagadora: Optional[str] = Field(default=None)
+    sdi: Decimal = Field(default=Decimal("0.00"), max_digits=10, decimal_places=2) # S.D.I. IMSS
+    empresa_pagadora: str = "NA"
     
     # --- BLOQUE 4: SEGURIDAD SOCIAL Y RT (Columnas R-V) ---
     fecha_alta_imss: Optional[date] = None
     tiene_infonavit: str = "NO"      # "SI" o "NO"
     numero_credito_infonavit: Optional[str] = None
-    registro_patronal: Optional[str] = Field(default=None)
-    clase_rt: Optional[str] = Field(default=None)
+    registro_patronal: str = "NA"
+    clase_rt: str = "NA"
     
     # --- BLOQUE 5: DATOS PERSONALES (Columnas W-Z) ---
     fecha_nacimiento: Optional[date] = None
-    estado_civil: Optional[str] = Field(default=None)
-    sexo: Optional[str] = Field(default=None)
+    estado_civil: str = "NA"
+    sexo: str = "NA"
     nacionalidad: str = "MEXICANO"
     correo: Optional[str] = None
     numero_telefono: Optional[str] = None
-    # --- DOMICILIO FISCAL (Dirección fiscal - Desglosada) ---
-    domicilio_fiscal_calle: Optional[str] = Field(default=None)
-    domicilio_fiscal_numero: Optional[str] = Field(default=None)
-    domicilio_fiscal_estado: Optional[str] = Field(default=None)
-    domicilio_fiscal_municipio: Optional[str] = Field(default=None)
-    domicilio_fiscal_colonia: Optional[str] = Field(default=None)
-    domicilio_fiscal_codigo_postal: Optional[str] = Field(default=None)
-    domicilio_fiscal: Optional[str] = None  # Campo generado automáticamente
+    domicilio_fiscal: Optional[str] = None
     tipo_sangre: Optional[str] = None
     tiene_fonacot: bool = False
     numero_fonacot: Optional[str] = None
@@ -83,32 +68,25 @@ class Employee(SQLModel, table=True):
     medicamentos_especiales: Optional[str] = None
     experiencia_anterior: Optional[str] = None
     
-    # --- DOMICILIO LABORAL (Dirección de trabajo - Desglosada) ---
-    domicilio_laboral_calle: Optional[str] = Field(default=None)
-    domicilio_laboral_numero: Optional[str] = Field(default=None)
-    domicilio_laboral_estado: Optional[str] = Field(default=None)
-    domicilio_laboral_municipio: Optional[str] = Field(default=None)
-    domicilio_laboral_colonia: Optional[str] = Field(default=None)
-    domicilio_laboral_codigo_postal: Optional[str] = Field(default=None)
-    domicilio_laboral: Optional[str] = Field(default=None)  # Campo generado automáticamente
-    tipo_contrato: Optional[str] = Field(default=None)
-    duracion_contrato: Optional[str] = Field(default=None)
+    domicilio_laboral: str = "NA"
+    tipo_contrato: str = "NA"
+    duracion_contrato: str = "NA"
     nombre_proyecto: Optional[str] = None
     consiste_proyecto: Optional[str] = None
     
     # --- BLOQUE 7: PAGOS Y BANCO (Columnas AF-AJ) ---
-    forma_pago: Optional[str] = Field(default=None)
-    se_le_paga_por: Optional[str] = Field(default=None)
-    sueldo_mensual_bruto: Optional[Decimal] = Field(default=None, max_digits=10, decimal_places=2)
-    sueldo_mensual_neto: Optional[Decimal] = Field(default=None, max_digits=10, decimal_places=2)
-    banco: Optional[str] = Field(default=None)
-    cuenta_bancaria: Optional[str] = Field(default=None)
-    clabe_interbancaria: Optional[str] = Field(default=None)
+    forma_pago: str = "NA"
+    se_le_paga_por: str = "NA"
+    sueldo_mensual_bruto: Decimal = Field(default=Decimal("0.00"), max_digits=10, decimal_places=2)
+    sueldo_mensual_neto: Decimal = Field(default=Decimal("0.00"), max_digits=10, decimal_places=2)
+    banco: Optional[str] = Field(default="NA")
+    cuenta_bancaria: Optional[str] = Field(default="NA")
+    clabe_interbancaria: Optional[str] = Field(default="NA")
     
     # --- BLOQUE 8: EQUIPO Y TALLAS (Para Control Operativo) ---
-    talla_camisa: Optional[str] = Field(default=None)
-    talla_pantalon: Optional[str] = Field(default=None)
-    talla_calzado: Optional[str] = Field(default=None)
+    talla_camisa: Optional[str] = Field(default="NA")
+    talla_pantalon: Optional[str] = Field(default="NA")
+    talla_calzado: Optional[str] = Field(default="NA")
     tiene_zapato_casquillo: bool = False
     
     # --- RELACIONES ---

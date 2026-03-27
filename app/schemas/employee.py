@@ -8,33 +8,32 @@ from urllib.error import URLError, HTTPError
 
 _CP_CACHE: Dict[str, Dict[str, Any]] = {}
 
-# --- Helper: Convertir fechas desde múltiples formatos ---
+
+# --- Helper: Convertir fechas desde multiples formatos ---
 def parse_date(value: Union[str, date]) -> date:
     """Acepta fechas en formato ISO (YYYY-MM-DD) o DD/MM/YYYY"""
     if isinstance(value, date):
         return value
     if not isinstance(value, str):
         return value
-    
-    # Intentar formato ISO primero
+
     try:
         return datetime.fromisoformat(value).date()
-    except:
+    except Exception:
         pass
-    
-    # Intentar formato DD/MM/YYYY
+
     try:
         return datetime.strptime(value, "%d/%m/%Y").date()
-    except:
+    except Exception:
         pass
-    
-    # Intentar formato DD-MM-YYYY
+
     try:
         return datetime.strptime(value, "%d-%m-%Y").date()
-    except:
+    except Exception:
         pass
-    
+
     raise ValueError(f"Formato de fecha no soportado: {value}. Use YYYY-MM-DD o DD/MM/YYYY")
+
 
 def _normalize_text(value: Optional[str]) -> Optional[str]:
     if value is None:
@@ -42,11 +41,13 @@ def _normalize_text(value: Optional[str]) -> Optional[str]:
     cleaned = str(value).strip()
     return cleaned if cleaned else None
 
+
 def _normalize_cp(value: str) -> str:
     cp = "".join(ch for ch in str(value) if ch.isdigit())
     if len(cp) != 5:
-        raise ValueError("El código postal debe tener exactamente 5 dígitos")
+        raise ValueError("El codigo postal debe tener exactamente 5 digitos")
     return cp
+
 
 def _fetch_cp_from_copomex(cp: str) -> Optional[Dict[str, Any]]:
     url = f"https://api.copomex.com/query/info_cp/{cp}?token=pruebas&type=simplified"
@@ -69,6 +70,7 @@ def _fetch_cp_from_copomex(cp: str) -> Optional[Dict[str, Any]]:
         "municipio": _normalize_text(response_data.get("municipio")),
         "colonias": [c for c in (_normalize_text(c) for c in colonias) if c],
     }
+
 
 def _fetch_cp_from_sepomex(cp: str) -> Optional[Dict[str, Any]]:
     url = f"https://sepomex.icalialabs.com/api/v1/zip_codes?zip_code={cp}"
@@ -95,6 +97,7 @@ def _fetch_cp_from_sepomex(cp: str) -> Optional[Dict[str, Any]]:
         "colonias": sorted(set(colonias)),
     }
 
+
 def _resolve_cp_data(cp: str) -> Optional[Dict[str, Any]]:
     if cp in _CP_CACHE:
         return _CP_CACHE[cp]
@@ -104,7 +107,22 @@ def _resolve_cp_data(cp: str) -> Optional[Dict[str, Any]]:
         _CP_CACHE[cp] = cp_data
     return cp_data
 
-def _format_structured_address(address: "AddressInput", field_name: str) -> str:
+
+class AddressInput(BaseModel):
+    estado: Optional[str] = Field(default=None)
+    municipio: Optional[str] = Field(default=None)
+    colonia: Optional[str] = Field(default=None)
+    calle_numero: str
+    codigo_postal: str
+    autocompletar_por_cp: bool = True
+
+    @field_validator("codigo_postal", mode="before")
+    @classmethod
+    def normalize_codigo_postal(cls, v):
+        return _normalize_cp(v)
+
+
+def _format_structured_address(address: AddressInput, field_name: str) -> str:
     cp = _normalize_cp(address.codigo_postal)
     estado = _normalize_text(address.estado)
     municipio = _normalize_text(address.municipio)
@@ -125,49 +143,16 @@ def _format_structured_address(address: "AddressInput", field_name: str) -> str:
                 colonia = colonias[0]
             elif colonia and colonias and colonia not in colonias:
                 raise ValueError(
-                    f"{field_name}: la colonia '{colonia}' no corresponde al código postal {cp}"
+                    f"{field_name}: la colonia '{colonia}' no corresponde al codigo postal {cp}"
                 )
 
     if not estado or not municipio or not colonia:
         raise ValueError(
-            f"{field_name}: faltan datos de estado/municipio/colonia y no se pudieron autocompletar con el código postal {cp}"
+            f"{field_name}: faltan estado/municipio/colonia y no se pudieron autocompletar con el codigo postal {cp}"
         )
 
     return f"{estado}, {municipio}, {colonia}, {calle_numero}, CP {cp}"
 
-class AddressInput(BaseModel):
-    """Schema para recibir direcciones estructuradas"""
-    calle: Optional[str] = None
-    numero: Optional[str] = None
-    estado: Optional[str] = None
-    municipio: Optional[str] = None
-    colonia: Optional[str] = None
-    codigo_postal: Optional[str] = None
-
-    @field_validator("codigo_postal", mode="before")
-    @classmethod
-    def normalize_codigo_postal(cls, v):
-        if v is None:
-            return None
-        return _normalize_cp(v)
-    
-    def format_complete(self) -> Optional[str]:
-        """Arma dirección completa a partir de partes"""
-        parts = []
-        if self.calle:
-            parts.append(f"Calle {self.calle}" if self.numero else self.calle)
-        if self.numero and self.calle:
-            parts[-1] = f"{self.calle} {self.numero}"
-        if self.colonia:
-            parts.append(self.colonia)
-        if self.municipio:
-            parts.append(self.municipio)
-        if self.estado:
-            parts.append(self.estado)
-        if self.codigo_postal:
-            parts.append(f"CP {self.codigo_postal}")
-        
-        return ", ".join(parts) if parts else None
 
 # --- Esquema para Beneficiarios ---
 class BeneficiaryBase(BaseModel):
@@ -175,58 +160,40 @@ class BeneficiaryBase(BaseModel):
     parentesco: Optional[str] = "NA"
     porcentaje: Decimal = Field(default=Decimal("0"), ge=0, le=100)
 
+
 # --- Esquema Principal de Empleado ---
 class EmployeeBase(BaseModel):
-    # Identificación Básica - NSS es el único requerido
-    nombre: Optional[str] = None
-    apellido_paterno: Optional[str] = None
-    apellido_materno: Optional[str] = None
+    nombre: str
+    apellido_paterno: str
+    apellido_materno: str
     nss: str
-    rfc: Optional[str] = None
-    curp: Optional[str] = None
-    
-    # --- DOMICILIO COMPLETO (Partes individuales) ---
-    domicilio_calle: Optional[str] = None
-    domicilio_numero: Optional[str] = None
-    domicilio_estado: Optional[str] = None
-    domicilio_municipio: Optional[str] = None
-    domicilio_colonia: Optional[str] = None
-    domicilio_codigo_postal: Optional[str] = None
-    domicilio_completo: Optional[str] = None  # Se genera automáticamente
-    
-    # Datos Laborales (CIT / IMSS)
-    puesto: Optional[str] = None
-    actividades_detalle: Optional[str] = None
+    rfc: str
+    curp: str = "NA"
+
+    domicilio_completo: Optional[str] = "NA"
+
+    puesto: Optional[str] = "NA"
+    actividades_detalle: Optional[str] = "NA"
     puesto_sugerido: Optional[str] = None
     turno_sugerido: Optional[str] = None
-    cliente_nombre: Optional[str] = None
-    cliente_rfc: Optional[str] = None
+    cliente_nombre: Optional[str] = "NA"
+    cliente_rfc: Optional[str] = "NA"
     tipo_salario: Optional[str] = "SALARIO NOMINAL"
-    salario_diario: Optional[Decimal] = None
+    salario_diario: Decimal = Decimal("0.00")
     factor_integracion: Decimal = Decimal("1.0493")
-    sdi: Optional[Decimal] = None
-    empresa_pagadora: Optional[str] = None
+    sdi: Decimal = Decimal("0.00")
+    empresa_pagadora: Optional[str] = "NA"
     fecha_alta_imss: Optional[date] = None
-    registro_patronal: Optional[str] = None
-    clase_rt: Optional[str] = None
-    
-    # Datos Personales
+    registro_patronal: Optional[str] = "NA"
+    clase_rt: Optional[str] = "NA"
+
     fecha_nacimiento: Optional[date] = None
-    estado_civil: Optional[str] = None
-    sexo: Optional[str] = None
+    estado_civil: Optional[str] = "NA"
+    sexo: Optional[str] = "NA"
     nacionalidad: str = "MEXICANO"
     correo: Optional[str] = None
     numero_telefono: Optional[str] = None
-    
-    # --- DOMICILIO FISCAL (Partes individuales) ---
-    domicilio_fiscal_calle: Optional[str] = None
-    domicilio_fiscal_numero: Optional[str] = None
-    domicilio_fiscal_estado: Optional[str] = None
-    domicilio_fiscal_municipio: Optional[str] = None
-    domicilio_fiscal_colonia: Optional[str] = None
-    domicilio_fiscal_codigo_postal: Optional[str] = None
-    domicilio_fiscal: Optional[str] = None  # Se genera automáticamente
-    
+    domicilio_fiscal: Optional[str] = None
     tipo_sangre: Optional[str] = None
     tiene_fonacot: bool = False
     numero_fonacot: Optional[str] = None
@@ -234,225 +201,106 @@ class EmployeeBase(BaseModel):
     enfermedades_alergias: Optional[str] = None
     medicamentos_especiales: Optional[str] = None
     experiencia_anterior: Optional[str] = None
-    
-    # Seguridad Social
+    domicilio_laboral: Optional[str] = "NA"
+
     tiene_infonavit: Optional[str] = "NO"
     numero_credito_infonavit: Optional[str] = None
-    
-    # Contrato y Proyecto
-    tipo_contrato: Optional[str] = None
-    duracion_contrato: Optional[str] = None
-    nombre_proyecto: Optional[str] = None
-    consiste_proyecto: Optional[str] = None
-    
-    # --- DOMICILIO LABORAL (Partes individuales) ---
-    domicilio_laboral_calle: Optional[str] = None
-    domicilio_laboral_numero: Optional[str] = None
-    domicilio_laboral_estado: Optional[str] = None
-    domicilio_laboral_municipio: Optional[str] = None
-    domicilio_laboral_colonia: Optional[str] = None
-    domicilio_laboral_codigo_postal: Optional[str] = None
-    domicilio_laboral: Optional[str] = None  # Se genera automáticamente
-    
-    # Nómina y Pagos
-    forma_pago: Optional[str] = None
-    se_le_paga_por: Optional[str] = None
-    sueldo_mensual_bruto: Optional[Decimal] = None
-    sueldo_mensual_neto: Optional[Decimal] = None
-    banco: Optional[str] = None
-    cuenta_bancaria: Optional[str] = None
-    clabe_interbancaria: Optional[str] = None
-    
-    # Tallas (Control Operativo)
-    talla_camisa: Optional[str] = None
-    talla_pantalon: Optional[str] = None
-    talla_calzado: Optional[str] = None
+
+    tipo_contrato: Optional[str] = "NA"
+    duracion_contrato: Optional[str] = "NA"
+    nombre_proyecto: Optional[str] = "NA"
+    consiste_proyecto: Optional[str] = "NA"
+
+    forma_pago: Optional[str] = "NA"
+    se_le_paga_por: Optional[str] = "NA"
+    sueldo_mensual_bruto: Decimal = Decimal("0.00")
+    sueldo_mensual_neto: Decimal = Decimal("0.00")
+    banco: Optional[str] = "NA"
+    cuenta_bancaria: Optional[str] = "NA"
+    clabe_interbancaria: Optional[str] = "NA"
+
+    talla_camisa: Optional[str] = "NA"
+    talla_pantalon: Optional[str] = "NA"
+    talla_calzado: Optional[str] = "NA"
     tiene_zapato_casquillo: bool = False
 
-    # Datos para App Operativa
     es_operativo: bool = False
     username_operativo: Optional[str] = None
     hashed_pin: Optional[str] = None
-    
-    # --- Validadores para convertir fechas desde múltiples formatos ---
-    @field_validator('fecha_nacimiento', 'fecha_alta_imss', mode='before')
+
+    @field_validator("fecha_nacimiento", "fecha_alta_imss", mode="before")
     @classmethod
     def parse_dates(cls, v):
         if v is None or isinstance(v, date):
             return v
         return parse_date(v)
-    
-    @model_validator(mode='after')
-    def generate_complete_addresses(self) -> 'EmployeeBase':
-        """Genera direcciones completas a partir de partes individuales"""
-        # Domicilio Completo
-        if not self.domicilio_completo and any([
-            self.domicilio_calle, self.domicilio_numero, self.domicilio_estado,
-            self.domicilio_municipio, self.domicilio_colonia, self.domicilio_codigo_postal
-        ]):
-            addr = AddressInput(
-                calle=self.domicilio_calle,
-                numero=self.domicilio_numero,
-                estado=self.domicilio_estado,
-                municipio=self.domicilio_municipio,
-                colonia=self.domicilio_colonia,
-                codigo_postal=self.domicilio_codigo_postal
-            )
-            self.domicilio_completo = addr.format_complete()
-        
-        # Domicilio Laboral
-        if not self.domicilio_laboral and any([
-            self.domicilio_laboral_calle, self.domicilio_laboral_numero, self.domicilio_laboral_estado,
-            self.domicilio_laboral_municipio, self.domicilio_laboral_colonia, self.domicilio_laboral_codigo_postal
-        ]):
-            addr = AddressInput(
-                calle=self.domicilio_laboral_calle,
-                numero=self.domicilio_laboral_numero,
-                estado=self.domicilio_laboral_estado,
-                municipio=self.domicilio_laboral_municipio,
-                colonia=self.domicilio_laboral_colonia,
-                codigo_postal=self.domicilio_laboral_codigo_postal
-            )
-            self.domicilio_laboral = addr.format_complete()
-        
-        # Domicilio Fiscal
-        if not self.domicilio_fiscal and any([
-            self.domicilio_fiscal_calle, self.domicilio_fiscal_numero, self.domicilio_fiscal_estado,
-            self.domicilio_fiscal_municipio, self.domicilio_fiscal_colonia, self.domicilio_fiscal_codigo_postal
-        ]):
-            addr = AddressInput(
-                calle=self.domicilio_fiscal_calle,
-                numero=self.domicilio_fiscal_numero,
-                estado=self.domicilio_fiscal_estado,
-                municipio=self.domicilio_fiscal_municipio,
-                colonia=self.domicilio_fiscal_colonia,
-                codigo_postal=self.domicilio_fiscal_codigo_postal
-            )
-            self.domicilio_fiscal = addr.format_complete()
-        
-        return self
 
-# --- Esquema para cuando RECIBES datos (Create) ---
+
 class EmployeeCreate(EmployeeBase):
     beneficiaries: List[BeneficiaryBase] = Field(default_factory=list)
 
-    @model_validator(mode='before')
+    @model_validator(mode="before")
     @classmethod
-    def handle_address_input(cls, values):
-        """Permite recibir direcciones como:
-        1. Dirección completa (texto): "Calle X, Municipio, Estado, CP"
-        2. Dirección estructurada (objeto): {calle, numero, estado, municipio, colonia, codigo_postal}
-        """
+    def normalize_addresses(cls, values):
         if not isinstance(values, dict):
             return values
 
-        # Mapear campos de direcciones estructuradas
-        address_mappings = {
-            "domicilio_completo": {
-                "calle": "domicilio_calle",
-                "numero": "domicilio_numero",
-                "estado": "domicilio_estado",
-                "municipio": "domicilio_municipio",
-                "colonia": "domicilio_colonia",
-                "codigo_postal": "domicilio_codigo_postal"
-            },
-            "domicilio_laboral": {
-                "calle": "domicilio_laboral_calle",
-                "numero": "domicilio_laboral_numero",
-                "estado": "domicilio_laboral_estado",
-                "municipio": "domicilio_laboral_municipio",
-                "colonia": "domicilio_laboral_colonia",
-                "codigo_postal": "domicilio_laboral_codigo_postal"
-            },
-            "domicilio_fiscal": {
-                "calle": "domicilio_fiscal_calle",
-                "numero": "domicilio_fiscal_numero",
-                "estado": "domicilio_fiscal_estado",
-                "municipio": "domicilio_fiscal_municipio",
-                "colonia": "domicilio_fiscal_colonia",
-                "codigo_postal": "domicilio_fiscal_codigo_postal"
-            }
+        address_fields = {
+            "domicilio_completo": "Domicilio personal",
+            "domicilio_laboral": "Domicilio laboral",
+            "domicilio_fiscal": "Domicilio fiscal",
         }
 
-        for address_field, field_mapping in address_mappings.items():
-            raw_value = values.get(address_field)
-            if raw_value is None:
-                continue
-
-            # Si es un objeto, mapear sus propiedades a campos individuales
+        for field_name, label in address_fields.items():
+            raw_value = values.get(field_name)
             if isinstance(raw_value, dict):
-                for struct_key, model_key in field_mapping.items():
-                    if struct_key in raw_value:
-                        values[model_key] = raw_value[struct_key]
+                address = AddressInput(**raw_value)
+                values[field_name] = _format_structured_address(address, label)
+            else:
+                raise ValueError(
+                    f"{label} debe enviarse como objeto con este orden: estado, municipio, colonia, calle_numero, codigo_postal"
+                )
 
         return values
 
-    @model_validator(mode='after')
-    def validate_identity_dates(self) -> 'EmployeeCreate':
-        # VALIDACIÓN MUY PERMISIVA - solo valida en casos específicos
-        # Si falta fecha_nacimiento, permitir sin validar
+    @model_validator(mode="after")
+    def validate_identity_dates(self) -> "EmployeeCreate":
         if not self.fecha_nacimiento:
             return self
-        
-        # Permitir datos de prueba (cortos, "NA", o con caracteres no numéricos)
+
         if len(self.rfc) < 13 or len(self.curp) < 18:
             return self
-        
-        # Saltar validación si RFC/CURP contienen "NA" o son claramente test data
+
         if "NA" in self.rfc or "NA" in self.curp:
             return self
-        
-        # Saltar validación si la fecha está en formato YYYYMMDD sin separadores
-        # (indica que es un campo no procesado o de test)
+
         rfc_date_part = self.rfc[4:10] if len(self.rfc) >= 10 else ""
         curp_date_part = self.curp[4:10] if len(self.curp) >= 10 else ""
-        
-        # Solo validar si AMBAS partes de fecha son numéricas
+
         if not (rfc_date_part.isdigit() and curp_date_part.isdigit()):
             return self
-        
-        # A este punto, solo validamos si todo indica ser un RFC/CURP real
+
         try:
             expected_date = self.fecha_nacimiento.strftime("%y%m%d")
-            
-            # Validar RFC solo si tiene formato consistente
             if rfc_date_part != expected_date:
-                # Log pero PERMITIR (no fallar)
-                # print(f"Warning: RFC fecha ({rfc_date_part}) != nacimiento ({expected_date})")
                 pass
-            
-            # Validar CURP solo si tiene formato consistente
             if curp_date_part != expected_date:
-                # Log pero PERMITIR (no fallar)
-                # print(f"Warning: CURP fecha ({curp_date_part}) != nacimiento ({expected_date})")
                 pass
-                
-        except Exception as e:
-            # Si hay cualquier error en validación, permitir
+        except Exception:
             pass
-                
+
         return self
 
-# --- Esquema para cuando ACTUALIZAS datos (Update) ---
+
 class EmployeeUpdate(BaseModel):
-    """Schema para actualizar un empleado - TODOS los campos son opcionales"""
-    # Identificación Básica (Opcionales para actualización)
     nombre: Optional[str] = None
     apellido_paterno: Optional[str] = None
     apellido_materno: Optional[str] = None
     nss: Optional[str] = None
     rfc: Optional[str] = None
     curp: Optional[str] = None
-    
-    # Resto de campos opcionales
+
     domicilio_completo: Optional[str] = None
-    domicilio_calle: Optional[str] = None
-    domicilio_numero: Optional[str] = None
-    domicilio_estado: Optional[str] = None
-    domicilio_municipio: Optional[str] = None
-    domicilio_colonia: Optional[str] = None
-    domicilio_codigo_postal: Optional[str] = None
-    
     puesto: Optional[str] = None
     actividades_detalle: Optional[str] = None
     puesto_sugerido: Optional[str] = None
@@ -467,23 +315,14 @@ class EmployeeUpdate(BaseModel):
     fecha_alta_imss: Optional[date] = None
     registro_patronal: Optional[str] = None
     clase_rt: Optional[str] = None
-    
+
     fecha_nacimiento: Optional[date] = None
     estado_civil: Optional[str] = None
     sexo: Optional[str] = None
     nacionalidad: Optional[str] = None
     correo: Optional[str] = None
     numero_telefono: Optional[str] = None
-    
-    # --- DOMICILIO FISCAL (Partes individuales) ---
-    domicilio_fiscal_calle: Optional[str] = None
-    domicilio_fiscal_numero: Optional[str] = None
-    domicilio_fiscal_estado: Optional[str] = None
-    domicilio_fiscal_municipio: Optional[str] = None
-    domicilio_fiscal_colonia: Optional[str] = None
-    domicilio_fiscal_codigo_postal: Optional[str] = None
     domicilio_fiscal: Optional[str] = None
-    
     tipo_sangre: Optional[str] = None
     tiene_fonacot: Optional[bool] = None
     numero_fonacot: Optional[str] = None
@@ -491,24 +330,16 @@ class EmployeeUpdate(BaseModel):
     enfermedades_alergias: Optional[str] = None
     medicamentos_especiales: Optional[str] = None
     experiencia_anterior: Optional[str] = None
-    
-    # --- DOMICILIO LABORAL (Partes individuales) ---
-    domicilio_laboral_calle: Optional[str] = None
-    domicilio_laboral_numero: Optional[str] = None
-    domicilio_laboral_estado: Optional[str] = None
-    domicilio_laboral_municipio: Optional[str] = None
-    domicilio_laboral_colonia: Optional[str] = None
-    domicilio_laboral_codigo_postal: Optional[str] = None
     domicilio_laboral: Optional[str] = None
-    
+
     tiene_infonavit: Optional[str] = None
     numero_credito_infonavit: Optional[str] = None
-    
+
     tipo_contrato: Optional[str] = None
     duracion_contrato: Optional[str] = None
     nombre_proyecto: Optional[str] = None
     consiste_proyecto: Optional[str] = None
-    
+
     forma_pago: Optional[str] = None
     se_le_paga_por: Optional[str] = None
     sueldo_mensual_bruto: Optional[Decimal] = None
@@ -516,125 +347,52 @@ class EmployeeUpdate(BaseModel):
     banco: Optional[str] = None
     cuenta_bancaria: Optional[str] = None
     clabe_interbancaria: Optional[str] = None
-    
+
     talla_camisa: Optional[str] = None
     talla_pantalon: Optional[str] = None
     talla_calzado: Optional[str] = None
     tiene_zapato_casquillo: Optional[bool] = None
 
-    @model_validator(mode='before')
+    @model_validator(mode="before")
     @classmethod
-    def handle_address_input(cls, values):
-        """Permite recibir direcciones como:
-        1. Dirección completa (texto): "Calle X, Municipio, Estado, CP"
-        2. Dirección estructurada (objeto): {calle, numero, estado, municipio, colonia, codigo_postal}
-        """
+    def normalize_addresses(cls, values):
         if not isinstance(values, dict):
             return values
 
-        # Mapear campos de direcciones estructuradas
-        address_mappings = {
-            "domicilio_completo": {
-                "calle": "domicilio_calle",
-                "numero": "domicilio_numero",
-                "estado": "domicilio_estado",
-                "municipio": "domicilio_municipio",
-                "colonia": "domicilio_colonia",
-                "codigo_postal": "domicilio_codigo_postal"
-            },
-            "domicilio_laboral": {
-                "calle": "domicilio_laboral_calle",
-                "numero": "domicilio_laboral_numero",
-                "estado": "domicilio_laboral_estado",
-                "municipio": "domicilio_laboral_municipio",
-                "colonia": "domicilio_laboral_colonia",
-                "codigo_postal": "domicilio_laboral_codigo_postal"
-            },
-            "domicilio_fiscal": {
-                "calle": "domicilio_fiscal_calle",
-                "numero": "domicilio_fiscal_numero",
-                "estado": "domicilio_fiscal_estado",
-                "municipio": "domicilio_fiscal_municipio",
-                "colonia": "domicilio_fiscal_colonia",
-                "codigo_postal": "domicilio_fiscal_codigo_postal"
-            }
+        address_fields = {
+            "domicilio_completo": "Domicilio personal",
+            "domicilio_laboral": "Domicilio laboral",
+            "domicilio_fiscal": "Domicilio fiscal",
         }
 
-        for address_field, field_mapping in address_mappings.items():
-            raw_value = values.get(address_field)
+        for field_name, label in address_fields.items():
+            if field_name not in values:
+                continue
+
+            raw_value = values[field_name]
             if raw_value is None:
                 continue
 
-            # Si es un objeto, mapear sus propiedades a campos individuales
             if isinstance(raw_value, dict):
-                for struct_key, model_key in field_mapping.items():
-                    if struct_key in raw_value:
-                        values[model_key] = raw_value[struct_key]
+                address = AddressInput(**raw_value)
+                values[field_name] = _format_structured_address(address, label)
+            else:
+                raise ValueError(
+                    f"{label} debe enviarse como objeto con este orden: estado, municipio, colonia, calle_numero, codigo_postal"
+                )
 
         return values
-    
-    # --- Validadores para convertir fechas desde múltiples formatos ---
-    @field_validator('fecha_nacimiento', 'fecha_alta_imss', mode='before')
+
+    @field_validator("fecha_nacimiento", "fecha_alta_imss", mode="before")
     @classmethod
     def parse_dates(cls, v):
         if v is None or isinstance(v, date):
             return v
         return parse_date(v)
-    
-    @model_validator(mode='after')
-    def generate_complete_addresses(self) -> 'EmployeeUpdate':
-        """Genera direcciones completas a partir de partes individuales"""
-        # Domicilio Completo
-        if not self.domicilio_completo and any([
-            self.domicilio_calle, self.domicilio_numero, self.domicilio_estado,
-            self.domicilio_municipio, self.domicilio_colonia, self.domicilio_codigo_postal
-        ]):
-            addr = AddressInput(
-                calle=self.domicilio_calle,
-                numero=self.domicilio_numero,
-                estado=self.domicilio_estado,
-                municipio=self.domicilio_municipio,
-                colonia=self.domicilio_colonia,
-                codigo_postal=self.domicilio_codigo_postal
-            )
-            self.domicilio_completo = addr.format_complete()
-        
-        # Domicilio Laboral
-        if not self.domicilio_laboral and any([
-            self.domicilio_laboral_calle, self.domicilio_laboral_numero, self.domicilio_laboral_estado,
-            self.domicilio_laboral_municipio, self.domicilio_laboral_colonia, self.domicilio_laboral_codigo_postal
-        ]):
-            addr = AddressInput(
-                calle=self.domicilio_laboral_calle,
-                numero=self.domicilio_laboral_numero,
-                estado=self.domicilio_laboral_estado,
-                municipio=self.domicilio_laboral_municipio,
-                colonia=self.domicilio_laboral_colonia,
-                codigo_postal=self.domicilio_laboral_codigo_postal
-            )
-            self.domicilio_laboral = addr.format_complete()
-        
-        # Domicilio Fiscal
-        if not self.domicilio_fiscal and any([
-            self.domicilio_fiscal_calle, self.domicilio_fiscal_numero, self.domicilio_fiscal_estado,
-            self.domicilio_fiscal_municipio, self.domicilio_fiscal_colonia, self.domicilio_fiscal_codigo_postal
-        ]):
-            addr = AddressInput(
-                calle=self.domicilio_fiscal_calle,
-                numero=self.domicilio_fiscal_numero,
-                estado=self.domicilio_fiscal_estado,
-                municipio=self.domicilio_fiscal_municipio,
-                colonia=self.domicilio_fiscal_colonia,
-                codigo_postal=self.domicilio_fiscal_codigo_postal
-            )
-            self.domicilio_fiscal = addr.format_complete()
-        
-        return self
 
-# --- Esquema para cuando ENVIAS datos (Read) ---
+
 class EmployeeRead(EmployeeBase):
     id: int
     beneficiaries: List[BeneficiaryBase] = []
 
-    # Configuración para Pydantic V2 (compatible con ORM/SQLModel)
     model_config = ConfigDict(from_attributes=True)
